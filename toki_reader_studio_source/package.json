@@ -16,7 +16,7 @@
   },
   "build": {
     "appId": "com.steoj.tokireaderstudio",
-    "productName": "Toki Reader Studio",
+    "productName": "NTK",
     "asar": true,
     "files": [
       "src/**/*",
