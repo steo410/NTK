@@ -294,6 +294,45 @@ async function exportSeriesPdf(seriesSlug) {
   };
 }
 
+async function deleteSeriesFromLibrary(seriesSlug, seriesTitle) {
+  const libraryRoot = await getLibraryRoot();
+  const rootPath = path.resolve(libraryRoot);
+  const seriesDir = path.resolve(libraryRoot, String(seriesSlug || ""));
+
+  if (
+    !seriesSlug ||
+    seriesDir === rootPath ||
+    !seriesDir.startsWith(`${rootPath}${path.sep}`)
+  ) {
+    throw new Error("삭제할 작품 경로가 올바르지 않습니다.");
+  }
+
+  const confirmation = await dialog.showMessageBox({
+    type: "warning",
+    title: "보관함에서 삭제",
+    message: `“${String(seriesTitle || seriesSlug)}” 작품을 삭제할까요?`,
+    detail: "저장된 모든 회차 이미지와 작품 정보가 함께 삭제됩니다.",
+    buttons: ["취소", "삭제"],
+    defaultId: 0,
+    cancelId: 0,
+    noLink: true,
+  });
+
+  if (confirmation.response !== 1) {
+    return { deleted: false, cancelled: true };
+  }
+
+  await fsp.rm(seriesDir, { recursive: true, force: true });
+  return { deleted: true, cancelled: false };
+}
+
+ipcMain.handle(
+  "library:delete-series",
+  async (_event, seriesSlug, seriesTitle) => {
+    return deleteSeriesFromLibrary(seriesSlug, seriesTitle);
+  },
+);
+
 ipcMain.handle("export:pdf", async (_event, seriesSlug) => {
   return exportSeriesPdf(seriesSlug);
 });
