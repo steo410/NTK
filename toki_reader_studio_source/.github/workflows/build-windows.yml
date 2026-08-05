@@ -1,0 +1,43 @@
+name: Build Windows App
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    defaults:
+      run:
+        working-directory: toki_reader_studio_source
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: "npm"
+          cache-dependency-path: toki_reader_studio_source/package.json
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build Windows installer
+        run: npm run dist:win
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+
+      - name: Upload Windows files
+        uses: actions/upload-artifact@v4
+        with:
+          name: Toki-Reader-Studio-Windows
+          path: |
+            toki_reader_studio_source/dist/*.exe
+            toki_reader_studio_source/dist/*.yml
+          if-no-files-found: error
