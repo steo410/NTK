@@ -1,0 +1,54 @@
+{
+  "name": "toki-reader-studio",
+  "version": "1.0.0",
+  "description": "Authorized episode collector, downloader, library, and vertical-scroll reader.",
+  "main": "src/main.js",
+  "author": "steoj",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "dist:win": "electron-builder --win",
+    "dist:portable": "electron-builder --win portable"
+  },
+  "devDependencies": {
+    "electron": "43.2.0",
+    "electron-builder": "^26.0.12"
+  },
+  "build": {
+    "appId": "com.steoj.tokireaderstudio",
+    "productName": "Toki Reader Studio",
+    "asar": true,
+    "files": [
+      "src/**/*",
+      "ui/**/*",
+      "viewer-template/**/*",
+      "package.json"
+    ],
+    "directories": {
+      "output": "dist"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "${productName}-${version}-${arch}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    }
+  }
+}

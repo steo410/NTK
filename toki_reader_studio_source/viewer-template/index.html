@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1.0"
+  >
+  <title>Webtoon Reader</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <header class="toolbar">
+    <div class="title">
+      <strong id="series-title">Reader</strong>
+      <span id="episode-title"></span>
+    </div>
+
+    <div class="controls">
+      <button id="prev-button">이전 화</button>
+      <select id="episode-select"></select>
+      <button id="next-button">다음 화</button>
+      <label>
+        폭
+        <input
+          id="width-control"
+          type="range"
+          min="480"
+          max="1200"
+          value="850"
+        >
+      </label>
+      <button id="top-button">맨 위</button>
+    </div>
+  </header>
+
+  <main id="reader"></main>
+
+  <script src="./app.js"></script>
+</body>
+</html>

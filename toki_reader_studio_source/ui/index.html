@@ -1,0 +1,385 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1.0"
+  >
+  <title>Toki Reader Studio</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark">TR</div>
+        <div>
+          <strong>Toki Reader</strong>
+          <span>Studio</span>
+        </div>
+      </div>
+
+      <nav class="nav">
+        <button class="nav-item active" data-tab="collect">
+          <span>↓</span>
+          수집
+        </button>
+        <button class="nav-item" data-tab="library">
+          <span>▦</span>
+          보관함
+        </button>
+        <button class="nav-item" data-tab="reader">
+          <span>◫</span>
+          리더
+        </button>
+        <button class="nav-item" data-tab="export">
+          <span>↗</span>
+          내보내기
+        </button>
+        <button class="nav-item" data-tab="settings">
+          <span>⚙</span>
+          설정
+        </button>
+      </nav>
+
+      <div class="sidebar-note">
+        권리자에게 허가받은 자료에만 사용하세요.
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div>
+          <h1 id="page-title">자료 수집</h1>
+          <p id="page-subtitle">
+            작품 링크를 넣고 회차를 선택해 한 번에 저장합니다.
+          </p>
+        </div>
+        <div class="top-actions">
+          <button id="open-library-top" class="button ghost">
+            저장 폴더
+          </button>
+          <div class="status-pill" id="global-status">
+            준비됨
+          </div>
+        </div>
+      </header>
+
+      <section class="tab-panel active" id="tab-collect">
+        <div class="grid two">
+          <article class="card">
+            <div class="card-heading">
+              <div>
+                <span class="eyebrow">STEP 1</span>
+                <h2>작품과 범위 설정</h2>
+              </div>
+            </div>
+
+            <label class="field">
+              <span>작품 목록 URL</span>
+              <input
+                id="source-url"
+                type="url"
+                placeholder="https://toki31.com/webtoon/53297964"
+              >
+            </label>
+
+            <div class="grid three compact">
+              <label class="field">
+                <span>시작 회차</span>
+                <input id="min-episode" type="number" value="599">
+              </label>
+              <label class="field">
+                <span>마지막 회차</span>
+                <input id="max-episode" type="number" value="698">
+              </label>
+              <label class="field">
+                <span>작품명</span>
+                <input
+                  id="series-title"
+                  type="text"
+                  placeholder="자동 감지"
+                >
+              </label>
+            </div>
+
+            <label class="field">
+              <span>직접 정리한 회차 링크</span>
+              <textarea
+                id="pasted-urls"
+                rows="6"
+                placeholder="선택 사항&#10;599화,https://...&#10;600화,https://..."
+              ></textarea>
+            </label>
+
+            <label class="switch-row">
+              <input id="show-browser" type="checkbox" checked>
+              <span class="switch"></span>
+              <span>
+                작업 브라우저 표시
+                <small>인증 화면 확인이 필요한 경우 권장</small>
+              </span>
+            </label>
+
+            <button id="scan-button" class="button primary wide">
+              회차 목록 가져오기
+            </button>
+          </article>
+
+          <article class="card accent-card">
+            <span class="eyebrow">ONE CLICK FLOW</span>
+            <h2>한 화면에서 끝내기</h2>
+            <div class="flow-list">
+              <div>
+                <b>1</b>
+                <span>작품 목록 URL 입력</span>
+              </div>
+              <div>
+                <b>2</b>
+                <span>599화~698화처럼 범위 설정</span>
+              </div>
+              <div>
+                <b>3</b>
+                <span>목록 확인 후 다운로드 시작</span>
+              </div>
+              <div>
+                <b>4</b>
+                <span>보관함에서 세로 스크롤로 열람</span>
+              </div>
+            </div>
+            <p>
+              CSV 저장이나 PowerShell 실행 없이 앱 내부에서
+              링크 탐색부터 읽기까지 처리합니다.
+            </p>
+          </article>
+        </div>
+
+        <article class="card episode-card">
+          <div class="card-heading row-between">
+            <div>
+              <span class="eyebrow">STEP 2</span>
+              <h2>회차 선택</h2>
+              <p id="episode-summary">아직 불러온 회차가 없습니다.</p>
+            </div>
+            <div class="inline-actions">
+              <button id="select-all" class="button ghost small">
+                전체 선택
+              </button>
+              <button id="select-none" class="button ghost small">
+                전체 해제
+              </button>
+            </div>
+          </div>
+
+          <div class="episode-table-wrap">
+            <table class="episode-table">
+              <thead>
+                <tr>
+                  <th class="check-column"></th>
+                  <th>회차</th>
+                  <th>제목</th>
+                  <th>URL</th>
+                </tr>
+              </thead>
+              <tbody id="episode-table-body">
+                <tr class="empty-row">
+                  <td colspan="4">
+                    작품 URL을 입력하고 회차 목록을 가져오세요.
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="download-controls">
+            <label class="switch-row compact-switch">
+              <input id="force-download" type="checkbox">
+              <span class="switch"></span>
+              <span>기존 파일 다시 저장</span>
+            </label>
+
+            <div class="inline-actions">
+              <button
+                id="cancel-button"
+                class="button danger"
+                disabled
+              >
+                중지
+              </button>
+              <button
+                id="download-button"
+                class="button primary"
+                disabled
+              >
+                선택 회차 다운로드
+              </button>
+            </div>
+          </div>
+        </article>
+
+        <article class="card progress-card">
+          <div class="card-heading row-between">
+            <div>
+              <span class="eyebrow">PROGRESS</span>
+              <h2>다운로드 진행 상황</h2>
+            </div>
+            <strong id="progress-percent">0%</strong>
+          </div>
+
+          <div class="progress-track">
+            <div id="progress-bar" class="progress-bar"></div>
+          </div>
+
+          <div class="progress-stats">
+            <span id="progress-episode">대기 중</span>
+            <span id="progress-page">페이지 0 / 0</span>
+          </div>
+
+          <div id="log-box" class="log-box">
+            <div>앱이 준비되었습니다.</div>
+          </div>
+        </article>
+      </section>
+
+      <section class="tab-panel" id="tab-library">
+        <div class="section-heading">
+          <div>
+            <span class="eyebrow">LIBRARY</span>
+            <h2>내 보관함</h2>
+            <p>완료된 작품과 회차를 관리합니다.</p>
+          </div>
+          <button id="refresh-library" class="button ghost">
+            새로고침
+          </button>
+        </div>
+
+        <div id="library-grid" class="library-grid"></div>
+      </section>
+
+      <section class="tab-panel reader-panel" id="tab-reader">
+        <div class="reader-toolbar">
+          <div class="reader-selectors">
+            <select id="reader-series">
+              <option value="">작품 선택</option>
+            </select>
+            <select id="reader-episode">
+              <option value="">회차 선택</option>
+            </select>
+          </div>
+
+          <div class="reader-actions">
+            <button id="reader-prev" class="button ghost small">
+              이전 화
+            </button>
+            <button id="reader-next" class="button ghost small">
+              다음 화
+            </button>
+            <label class="width-control">
+              폭
+              <input
+                id="reader-width"
+                type="range"
+                min="480"
+                max="1200"
+                value="850"
+              >
+            </label>
+            <button id="reader-top" class="button ghost small">
+              맨 위
+            </button>
+          </div>
+        </div>
+
+        <div id="reader-empty" class="reader-empty">
+          보관함에서 작품과 회차를 선택하세요.
+        </div>
+        <div id="reader-canvas" class="reader-canvas"></div>
+      </section>
+
+      <section class="tab-panel" id="tab-export">
+        <div class="grid two">
+          <article class="card">
+            <span class="eyebrow">STATIC READER</span>
+            <h2>배포용 리더 만들기</h2>
+            <p>
+              저장한 이미지를 세로 스크롤 웹 리더 형태로
+              복사합니다. 결과 폴더에는 HTML, CSS, JavaScript,
+              이미지와 Vercel 설정이 포함됩니다.
+            </p>
+
+            <label class="field">
+              <span>내보낼 작품</span>
+              <select id="export-series">
+                <option value="">작품 선택</option>
+              </select>
+            </label>
+
+            <button id="export-button" class="button primary wide">
+              배포용 폴더 만들기
+            </button>
+
+            <div id="export-result" class="result-box">
+              아직 내보낸 작품이 없습니다.
+            </div>
+          </article>
+
+          <article class="card">
+            <span class="eyebrow">DEPLOY</span>
+            <h2>배포 구조</h2>
+            <ol class="deploy-steps">
+              <li>앱에서 배포용 폴더를 생성합니다.</li>
+              <li>해당 폴더를 별도 GitHub 저장소에 올립니다.</li>
+              <li>Vercel에서 저장소를 Import합니다.</li>
+              <li>프레임워크는 Other, 빌드 명령은 비워 둡니다.</li>
+            </ol>
+            <p class="notice">
+              공개 배포는 제작자 또는 권리자가 허용한 범위에서만
+              진행해야 합니다.
+            </p>
+          </article>
+        </div>
+      </section>
+
+      <section class="tab-panel" id="tab-settings">
+        <article class="card settings-card">
+          <span class="eyebrow">SETTINGS</span>
+          <h2>보관함 위치</h2>
+          <p id="library-path">불러오는 중...</p>
+
+          <div class="inline-actions">
+            <button id="choose-library" class="button primary">
+              폴더 변경
+            </button>
+            <button id="open-library-settings" class="button ghost">
+              폴더 열기
+            </button>
+          </div>
+
+          <hr>
+
+          <h3>작업 브라우저</h3>
+          <p>
+            링크 스캔과 이미지 수집은 별도의 Chromium 창에서
+            실행됩니다. 사이트에 인증 화면이 나타나면 해당 창에서
+            직접 완료한 후 앱을 계속 사용하세요.
+          </p>
+
+          <div class="inline-actions">
+            <button id="show-worker" class="button ghost">
+              작업 브라우저 표시
+            </button>
+            <button id="hide-worker" class="button ghost">
+              작업 브라우저 숨기기
+            </button>
+          </div>
+        </article>
+      </section>
+    </main>
+  </div>
+
+  <div id="toast-container" class="toast-container"></div>
+
+  <script src="./app.js"></script>
+</body>
+</html>
