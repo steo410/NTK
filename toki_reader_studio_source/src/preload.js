@@ -10,7 +10,69 @@ function readOptionalEpisodeBound(id, payloadValue) {
   return payloadValue;
 }
 
+function ensureHiddenPastedUrlsInput() {
+  if (document.getElementById("pasted-urls")) return;
+
+  const hiddenInput = document.createElement("textarea");
+  hiddenInput.id = "pasted-urls";
+  hiddenInput.hidden = true;
+  hiddenInput.value = "";
+  document.body.appendChild(hiddenInput);
+}
+
+function rewriteRequestedUiText() {
+  const pageTitle = document.getElementById("page-title");
+  if (pageTitle?.textContent.trim() === "세로 스크롤 리더") {
+    pageTitle.textContent = "리더";
+  }
+}
+
+function injectLibraryDeleteButtons() {
+  for (const card of document.querySelectorAll(".library-card")) {
+    if (card.querySelector(".delete-series")) continue;
+
+    const sourceButton =
+      card.querySelector(".open-series-folder") ||
+      card.querySelector(".read-series");
+
+    if (!sourceButton?.dataset.slug) continue;
+
+    const title = card.querySelector("h3")?.textContent.trim() ||
+      sourceButton.dataset.slug;
+    const button = document.createElement("button");
+
+    button.className = "button danger delete-series";
+    button.dataset.slug = sourceButton.dataset.slug;
+    button.dataset.title = title;
+    button.textContent = "삭제";
+    button.addEventListener("click", async (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+
+      const result = await ipcRenderer.invoke(
+        "library:delete-series",
+        button.dataset.slug,
+        button.dataset.title,
+      );
+
+      if (result?.deleted) {
+        document.getElementById("refresh-library")?.click();
+      }
+    });
+
+    const buttons = card.querySelector(".library-buttons");
+    if (buttons) {
+      buttons.style.gridTemplateColumns = "1fr auto auto";
+      buttons.appendChild(button);
+    }
+  }
+}
+
 window.addEventListener("DOMContentLoaded", () => {
+  ensureHiddenPastedUrlsInput();
+  rewriteRequestedUiText();
+  injectLibraryDeleteButtons();
+
   const minInput = document.getElementById("min-episode");
   const maxInput = document.getElementById("max-episode");
 
@@ -53,7 +115,11 @@ window.addEventListener("DOMContentLoaded", () => {
     }
   };
 
-  const observer = new MutationObserver(rewritePdfMessages);
+  const observer = new MutationObserver(() => {
+    rewritePdfMessages();
+    rewriteRequestedUiText();
+    injectLibraryDeleteButtons();
+  });
   observer.observe(document.body, {
     childList: true,
     subtree: true,
@@ -92,6 +158,12 @@ contextBridge.exposeInMainWorld("tokiAPI", {
     ),
   openSeriesFolder: (seriesSlug) =>
     ipcRenderer.invoke("library:open-series", seriesSlug),
+  deleteSeries: (seriesSlug, seriesTitle) =>
+    ipcRenderer.invoke(
+      "library:delete-series",
+      seriesSlug,
+      seriesTitle,
+    ),
 
   exportStaticReader: (seriesSlug) =>
     ipcRenderer.invoke("export:pdf", seriesSlug),
