@@ -42,6 +42,23 @@ window.addEventListener("DOMContentLoaded", () => {
     if (button) button.textContent = "PDF 내보내기";
     if (resultBox) resultBox.textContent = "아직 내보낸 PDF가 없습니다.";
   }
+
+  const rewritePdfMessages = () => {
+    for (const element of document.querySelectorAll(
+      "#export-result, #toast-container .toast, #global-status",
+    )) {
+      element.textContent = element.textContent
+        .replace("배포용 리더 폴더를 만들었습니다.", "회차별 PDF를 만들었습니다.")
+        .replace("리더 내보내는 중", "PDF 만드는 중");
+    }
+  };
+
+  const observer = new MutationObserver(rewritePdfMessages);
+  observer.observe(document.body, {
+    childList: true,
+    subtree: true,
+    characterData: true,
+  });
 });
 
 contextBridge.exposeInMainWorld("tokiAPI", {
