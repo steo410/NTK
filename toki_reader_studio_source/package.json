@@ -1,8 +1,8 @@
 {
   "name": "toki-reader-studio",
-  "version": "1.0.0",
-  "description": "Authorized episode collector, downloader, library, and vertical-scroll reader.",
-  "main": "src/main.js",
+  "version": "1.1.0",
+  "description": "Authorized episode collector, downloader, vertical-scroll reader, and PDF exporter.",
+  "main": "src/main-v1.1.js",
   "author": "steoj",
   "license": "MIT",
   "scripts": {
@@ -16,7 +16,7 @@
   },
   "build": {
     "appId": "com.steoj.tokireaderstudio",
-    "productName": "Toki Reader Studio",
+    "productName": "NTK",
     "asar": true,
     "files": [
       "src/**/*",
