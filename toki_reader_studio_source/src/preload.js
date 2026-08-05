@@ -22,6 +22,7 @@ function ensureHiddenPastedUrlsInput() {
 
 function rewriteRequestedUiText() {
   const pageTitle = document.getElementById("page-title");
+
   if (pageTitle?.textContent.trim() === "세로 스크롤 리더") {
     pageTitle.textContent = "리더";
   }
@@ -37,7 +38,8 @@ function injectLibraryDeleteButtons() {
 
     if (!sourceButton?.dataset.slug) continue;
 
-    const title = card.querySelector("h3")?.textContent.trim() ||
+    const title =
+      card.querySelector("h3")?.textContent.trim() ||
       sourceButton.dataset.slug;
     const button = document.createElement("button");
 
@@ -61,6 +63,7 @@ function injectLibraryDeleteButtons() {
     });
 
     const buttons = card.querySelector(".library-buttons");
+
     if (buttons) {
       buttons.style.gridTemplateColumns = "1fr auto auto";
       buttons.appendChild(button);
@@ -105,25 +108,23 @@ window.addEventListener("DOMContentLoaded", () => {
     if (resultBox) resultBox.textContent = "아직 내보낸 PDF가 없습니다.";
   }
 
-  const rewritePdfMessages = () => {
-    for (const element of document.querySelectorAll(
-      "#export-result, #toast-container .toast, #global-status",
-    )) {
-      element.textContent = element.textContent
-        .replace("배포용 리더 폴더를 만들었습니다.", "회차별 PDF를 만들었습니다.")
-        .replace("리더 내보내는 중", "PDF 만드는 중");
-    }
-  };
-
+  // 보관함 카드가 나중에 렌더링될 때 삭제 버튼만 한 번 추가합니다.
+  // 기존 버전처럼 textContent를 계속 다시 쓰지 않으므로 무한 MutationObserver 루프가 발생하지 않습니다.
+  let scheduled = false;
   const observer = new MutationObserver(() => {
-    rewritePdfMessages();
-    rewriteRequestedUiText();
-    injectLibraryDeleteButtons();
+    if (scheduled) return;
+    scheduled = true;
+
+    requestAnimationFrame(() => {
+      scheduled = false;
+      rewriteRequestedUiText();
+      injectLibraryDeleteButtons();
+    });
   });
+
   observer.observe(document.body, {
     childList: true,
     subtree: true,
-    characterData: true,
   });
 });
 
