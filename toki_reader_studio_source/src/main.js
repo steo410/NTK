@@ -129,7 +129,7 @@ async function loadRemotePage(url, showBrowser = true) {
     });
   }
 
-  await sleep(3500);
+  await sleep(1800);
   return worker;
 }
 
@@ -220,7 +220,7 @@ async function scanWorkPage({
   }
 
   if (!sourceUrl) {
-    throw new Error("작품 목록 URL 또는 회차 URL 목록을 입력하세요.");
+    throw new Error("작품 목록 URL을 입력하세요.");
   }
 
   const seriesId = extractSeriesId(sourceUrl);
@@ -244,12 +244,44 @@ async function scanWorkPage({
       (() => {
         const seriesId = ${JSON.stringify(seriesId)};
         const output = [];
+        const pathPattern = new RegExp(
+          "^/webtoon/" + seriesId + "/(\\\\d+)/?$"
+        );
 
-        for (const anchor of document.querySelectorAll("a[href]")) {
-          const text = (anchor.innerText || anchor.textContent || "")
+        function normalizeText(value) {
+          return String(value || "")
             .replace(/\\s+/g, " ")
             .trim();
+        }
 
+        function selectEpisodeTitle(anchor, number) {
+          const episodePattern = new RegExp(
+            "(?<!\\\\d)" + number + "(?:\\\\.\\\\d+)?\\\\s*화"
+          );
+          const candidates = [
+            anchor.closest("li, article, tr, [class*='item'], [class*='episode']"),
+            anchor.parentElement,
+            anchor,
+          ].filter(Boolean);
+
+          for (const candidate of candidates) {
+            const text = normalizeText(
+              candidate.innerText || candidate.textContent || ""
+            );
+            const match = text.match(episodePattern);
+
+            if (match) {
+              const index = text.indexOf(match[0]);
+              const start = Math.max(0, index - 60);
+              const end = Math.min(text.length, index + match[0].length + 60);
+              return text.slice(start, end).trim();
+            }
+          }
+
+          return number + "화";
+        }
+
+        for (const anchor of document.querySelectorAll("a[href]")) {
           let href = "";
 
           try {
@@ -259,17 +291,17 @@ async function scanWorkPage({
           }
 
           const parsed = new URL(href);
-          const pattern = new RegExp("^/webtoon/" + seriesId + "/[^/]+/?$");
+          const pathMatch = parsed.pathname.match(pathPattern);
 
-          if (!pattern.test(parsed.pathname)) continue;
+          if (!pathMatch) continue;
 
-          const match = text.match(/(?<!\\d)(\\d{1,5})(?:\\.\\d+)?\\s*화/);
+          const number = Number(pathMatch[1]);
 
-          if (!match) continue;
+          if (!Number.isFinite(number)) continue;
 
           output.push({
-            number: Number(match[1]),
-            title: text,
+            number,
+            title: selectEpisodeTitle(anchor, number),
             url: href,
           });
         }
@@ -280,10 +312,16 @@ async function scanWorkPage({
 
     for (const item of found) {
       if (item.number < minValue || item.number > maxValue) continue;
-      episodeMap.set(item.url, {
+
+      const previous = episodeMap.get(item.number);
+      const next = {
         ...item,
         selected: true,
-      });
+      };
+
+      if (!previous || next.title.length < previous.title.length) {
+        episodeMap.set(item.number, next);
+      }
     }
 
     if (episodeMap.size === previousCount) {
@@ -302,29 +340,65 @@ async function scanWorkPage({
     await worker.webContents.executeJavaScript(`
       (() => {
         const root = document.scrollingElement || document.documentElement;
-        const distance = Math.max(window.innerHeight * 0.85, 650);
+        const distance = Math.max(window.innerHeight * 1.25, 1100);
         root.scrollTop = Math.min(root.scrollTop + distance, root.scrollHeight);
         window.scrollBy(0, distance);
       })()
     `);
 
-    await sleep(550);
+    await sleep(320);
   }
 
   const pageInfo = await worker.webContents.executeJavaScript(`
     (() => {
-      const heading =
-        document.querySelector("h1")?.innerText ||
-        document.querySelector('[class*="title"]')?.innerText ||
-        document.querySelector('meta[property="og:title"]')?.content ||
-        document.title ||
-        "";
+      function clean(value) {
+        return String(value || "")
+          .replace(/\\s+/g, " ")
+          .replace(/\\s*[-|]\\s*(뉴토끼|NEWTO|NTK).*$/i, "")
+          .replace(/\\s*\\|.*$/, "")
+          .trim();
+      }
+
+      const selectors = [
+        "h1",
+        "[data-title]",
+        ".view-title",
+        ".webtoon-title",
+        ".toon-title",
+        "meta[property='og:title']",
+      ];
+
+      let title = "";
+
+      for (const selector of selectors) {
+        const element = document.querySelector(selector);
+        if (!element) continue;
+
+        const candidate = clean(
+          element.getAttribute?.("content") ||
+          element.getAttribute?.("data-title") ||
+          element.innerText ||
+          element.textContent ||
+          ""
+        );
+
+        if (
+          candidate &&
+          !/^전체 회차/.test(candidate) &&
+          !/^최신화 보기/.test(candidate) &&
+          candidate.length < 120
+        ) {
+          title = candidate;
+          break;
+        }
+      }
+
+      if (!title) {
+        title = clean(document.title);
+      }
 
       return {
-        title: String(heading)
-          .replace(/^\\d+\\s*[-–]\\s*/, "")
-          .replace(/\\s*\\|.*$/, "")
-          .trim(),
+        title,
         url: location.href,
       };
     })()
@@ -403,7 +477,7 @@ async function prepareViewerImage(contents, index) {
 
       if (!image.complete || image.naturalWidth === 0) {
         await new Promise((resolve) => {
-          const timer = setTimeout(resolve, 30000);
+          const timer = setTimeout(resolve, 15000);
           image.addEventListener("load", () => {
             clearTimeout(timer);
             resolve();
@@ -415,7 +489,7 @@ async function prepareViewerImage(contents, index) {
         });
       }
 
-      await new Promise((resolve) => setTimeout(resolve, 250));
+      await new Promise((resolve) => setTimeout(resolve, 80));
 
       const rect = image.getBoundingClientRect();
 
@@ -479,6 +553,217 @@ async function writeJson(filePath, value) {
   );
 }
 
+function chooseEpisodeMeta(current, incoming) {
+  if (!current) return incoming;
+  if (!incoming) return current;
+
+  const currentCompleted = current.completed === true;
+  const incomingCompleted = incoming.completed === true;
+
+  if (incomingCompleted !== currentCompleted) {
+    return incomingCompleted ? incoming : current;
+  }
+
+  return Number(incoming.pageCount || 0) >= Number(current.pageCount || 0)
+    ? incoming
+    : current;
+}
+
+async function mergeEpisodeFolder(sourceDir, targetDir) {
+  if (path.resolve(sourceDir) === path.resolve(targetDir)) return;
+
+  await fsp.mkdir(targetDir, { recursive: true });
+
+  for (const entry of await fsp.readdir(sourceDir, {
+    withFileTypes: true,
+  })) {
+    const sourcePath = path.join(sourceDir, entry.name);
+    const targetPath = path.join(targetDir, entry.name);
+
+    if (entry.isDirectory()) {
+      await mergeEpisodeFolder(sourcePath, targetPath);
+      continue;
+    }
+
+    let shouldCopy = true;
+
+    try {
+      const [sourceStat, targetStat] = await Promise.all([
+        fsp.stat(sourcePath),
+        fsp.stat(targetPath),
+      ]);
+      shouldCopy = sourceStat.size > targetStat.size;
+    } catch {
+      shouldCopy = true;
+    }
+
+    if (shouldCopy) {
+      await fsp.copyFile(sourcePath, targetPath);
+    }
+  }
+}
+
+async function normalizeSeriesStorage(
+  libraryRoot,
+  sourceId,
+  preferredTitle = "",
+  preferredSourceUrl = "",
+) {
+  if (!sourceId) {
+    return {
+      slug: slugify(preferredTitle || "웹툰"),
+      title: safeFileName(preferredTitle || "웹툰"),
+    };
+  }
+
+  const canonicalSlug = `webtoon-${sourceId}`;
+  const canonicalDir = path.join(libraryRoot, canonicalSlug);
+  const canonicalEpisodesDir = path.join(canonicalDir, "episodes");
+  const canonicalMetaPath = path.join(canonicalDir, "series.json");
+
+  await fsp.mkdir(canonicalEpisodesDir, { recursive: true });
+
+  const directoryEntries = await fsp.readdir(libraryRoot, {
+    withFileTypes: true,
+  });
+  const matchingSeries = [];
+
+  for (const entry of directoryEntries) {
+    if (!entry.isDirectory()) continue;
+
+    const seriesDir = path.join(libraryRoot, entry.name);
+    const meta = await readJson(path.join(seriesDir, "series.json"));
+
+    if (!meta) continue;
+
+    const metaSourceId = extractSeriesId(meta.sourceUrl || "");
+
+    if (
+      metaSourceId === sourceId ||
+      entry.name === canonicalSlug ||
+      entry.name.endsWith(`-${sourceId}`)
+    ) {
+      matchingSeries.push({
+        name: entry.name,
+        dir: seriesDir,
+        meta,
+      });
+    }
+  }
+
+  const episodeMap = new Map();
+  let createdAt = new Date().toISOString();
+  let fallbackTitle = "";
+
+  for (const series of matchingSeries) {
+    fallbackTitle =
+      fallbackTitle ||
+      safeFileName(series.meta.title || "");
+
+    if (series.meta.createdAt && series.meta.createdAt < createdAt) {
+      createdAt = series.meta.createdAt;
+    }
+
+    for (const episode of series.meta.episodes || []) {
+      const number = Number(episode.number);
+      if (!Number.isFinite(number)) continue;
+
+      episodeMap.set(
+        number,
+        chooseEpisodeMeta(episodeMap.get(number), episode),
+      );
+    }
+
+    const oldEpisodesDir = path.join(series.dir, "episodes");
+
+    if (fs.existsSync(oldEpisodesDir)) {
+      const episodeEntries = await fsp.readdir(oldEpisodesDir, {
+        withFileTypes: true,
+      });
+
+      for (const episodeEntry of episodeEntries) {
+        if (!episodeEntry.isDirectory()) continue;
+
+        await mergeEpisodeFolder(
+          path.join(oldEpisodesDir, episodeEntry.name),
+          path.join(canonicalEpisodesDir, episodeEntry.name),
+        );
+      }
+    }
+  }
+
+  const canonicalTitle = safeFileName(
+    preferredTitle || fallbackTitle || "웹툰",
+  );
+  const canonicalMeta = {
+    title: canonicalTitle,
+    slug: canonicalSlug,
+    sourceUrl:
+      preferredSourceUrl ||
+      matchingSeries.find((series) => series.meta.sourceUrl)?.meta
+        .sourceUrl ||
+      "",
+    createdAt,
+    updatedAt: new Date().toISOString(),
+    episodes: [...episodeMap.values()].sort(
+      (a, b) => Number(a.number) - Number(b.number),
+    ),
+  };
+
+  await writeJson(canonicalMetaPath, canonicalMeta);
+
+  for (const series of matchingSeries) {
+    if (series.name !== canonicalSlug) {
+      await fsp.rm(series.dir, { recursive: true, force: true });
+    }
+  }
+
+  return {
+    slug: canonicalSlug,
+    title: canonicalTitle,
+  };
+}
+
+async function normalizeAllSeriesStorage(libraryRoot) {
+  const entries = await fsp.readdir(libraryRoot, {
+    withFileTypes: true,
+  });
+  const sourceGroups = new Map();
+
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+
+    const meta = await readJson(
+      path.join(libraryRoot, entry.name, "series.json"),
+    );
+
+    if (!meta) continue;
+
+    const sourceId = extractSeriesId(meta.sourceUrl || "");
+    if (!sourceId) continue;
+
+    if (!sourceGroups.has(sourceId)) {
+      sourceGroups.set(sourceId, []);
+    }
+
+    sourceGroups.get(sourceId).push(meta);
+  }
+
+  for (const [sourceId, metas] of sourceGroups) {
+    const preferred = metas
+      .map((meta) => safeFileName(meta.title || ""))
+      .filter(Boolean)
+      .sort((a, b) => a.length - b.length)[0] || "웹툰";
+
+    await normalizeSeriesStorage(
+      libraryRoot,
+      sourceId,
+      preferred,
+      metas.find((meta) => meta.sourceUrl)?.sourceUrl || "",
+    );
+  }
+}
+
 async function downloadEpisodes({
   title,
   sourceUrl,
@@ -496,15 +781,20 @@ async function downloadEpisodes({
     throw new Error("다운로드할 회차를 한 개 이상 선택하세요.");
   }
 
-  const seriesTitle = safeFileName(title || "웹툰");
+  const requestedTitle = safeFileName(title || "웹툰");
   const sourceId = extractSeriesId(sourceUrl || selected[0]?.url || "");
-  const seriesSlug = slugify(
-    sourceId ? `${seriesTitle}-${sourceId}` : seriesTitle,
+  const libraryRoot = await getLibraryRoot();
+  const normalizedSeries = await normalizeSeriesStorage(
+    libraryRoot,
+    sourceId,
+    requestedTitle,
+    sourceUrl || selected[0]?.url || "",
   );
+  const seriesTitle = normalizedSeries.title;
+  const seriesSlug = normalizedSeries.slug;
 
   activeSeriesSlug = seriesSlug;
 
-  const libraryRoot = await getLibraryRoot();
   const seriesDir = path.join(libraryRoot, seriesSlug);
   const episodesDir = path.join(seriesDir, "episodes");
   const seriesMetaPath = path.join(seriesDir, "series.json");
@@ -568,10 +858,10 @@ async function downloadEpisodes({
 
     let pageCount = 0;
 
-    for (let retry = 0; retry < 4; retry += 1) {
+    for (let retry = 0; retry < 3; retry += 1) {
       pageCount = await getViewerCount(worker.webContents);
       if (pageCount > 0) break;
-      await sleep(2000);
+      await sleep(900);
     }
 
     if (pageCount === 0) {
@@ -668,7 +958,7 @@ async function downloadEpisodes({
         episodeTotal: selected.length,
       });
 
-      await sleep(180 + Math.floor(Math.random() * 180));
+      await sleep(60 + Math.floor(Math.random() * 70));
     }
 
     manifest.completed =
@@ -721,7 +1011,7 @@ async function downloadEpisodes({
       });
     }
 
-    await sleep(1200 + Math.floor(Math.random() * 1000));
+    await sleep(400 + Math.floor(Math.random() * 300));
   }
 
   sendProgress({
@@ -741,6 +1031,8 @@ async function downloadEpisodes({
 
 async function listLibrary() {
   const libraryRoot = await getLibraryRoot();
+  await normalizeAllSeriesStorage(libraryRoot);
+
   const entries = await fsp.readdir(libraryRoot, {
     withFileTypes: true,
   });
