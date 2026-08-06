@@ -337,4 +337,5 @@ ipcMain.handle("export:pdf", async (_event, seriesSlug) => {
   return exportSeriesPdf(seriesSlug);
 });
 
+require("./episode-scan-patch.js");
 require("./main.js");
