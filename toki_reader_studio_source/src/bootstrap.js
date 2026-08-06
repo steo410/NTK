@@ -3,6 +3,8 @@ const { ipcMain } = require('electron');
 // 구형 패치가 ipcMain.handle을 바꾸기 전에 Electron 원본을 보관합니다.
 const nativeHandle = ipcMain.handle.bind(ipcMain);
 
+// reloadIgnoringCache()가 Promise를 반환하지 않는 Electron 환경을 보정합니다.
+require('./reload-promise-fix.js');
 require('./download-recovery.js');
 require('./main-v1.1.js');
 
