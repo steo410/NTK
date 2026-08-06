@@ -56,19 +56,19 @@ async function loadAndWait(window, sourceUrl) {
     // 부가 리소스 오류가 있어도 실제 DOM이 표시될 수 있습니다.
   }
 
-  for (let round = 0; round < 20; round += 1) {
+  for (let round = 0; round < 40; round += 1) {
     const state = await window.webContents.executeJavaScript(`
       (() => ({
         ready: document.readyState,
+        episodeRows: document.querySelectorAll('a.ep-row-v2-link[href]').length,
         anchors: document.querySelectorAll('a[href]').length,
         textLength: document.body?.innerText?.length || 0,
       }))()
-    `).catch(() => ({ ready: 'loading', anchors: 0, textLength: 0 }));
+    `).catch(() => ({ ready: 'loading', episodeRows: 0, anchors: 0, textLength: 0 }));
 
     if (
       state.ready !== 'loading' &&
-      Number(state.anchors) > 20 &&
-      Number(state.textLength) > 200
+      Number(state.episodeRows) > 0
     ) {
       break;
     }
@@ -76,32 +76,36 @@ async function loadAndWait(window, sourceUrl) {
     await sleep(250);
   }
 
-  // 목록이 아래쪽에서 지연 렌더링되는 경우를 대비해 페이지 전체를 한 번 훑습니다.
-  for (let step = 0; step <= 20; step += 1) {
-    await window.webContents.executeJavaScript(`
-      (() => {
-        const root = document.scrollingElement || document.documentElement;
-        const maxScroll = Math.max(
-          (root?.scrollHeight || 0) - (root?.clientHeight || 0),
-          0
-        );
-        const next = Math.round(maxScroll * ${step / 20});
-        if (root) root.scrollTop = next;
-        window.scrollTo(0, next);
-      })()
-    `).catch(() => undefined);
-    await sleep(90);
-  }
+  // 목록이 지연 렌더링되더라도 DOM에 회차 행이 모두 들어오도록 아래까지 한 번 이동합니다.
+  await window.webContents.executeJavaScript(`
+    (() => {
+      const root = document.scrollingElement || document.documentElement;
+      const maxScroll = Math.max(
+        (root?.scrollHeight || 0) - (root?.clientHeight || 0),
+        0
+      );
+      if (root) root.scrollTop = maxScroll;
+      window.scrollTo(0, maxScroll);
+    })()
+  `).catch(() => undefined);
 
-  await window.webContents.executeJavaScript(`window.scrollTo(0, 0)`).catch(() => undefined);
-  await sleep(150);
+  await sleep(250);
+
+  await window.webContents.executeJavaScript(`
+    (() => {
+      const root = document.scrollingElement || document.documentElement;
+      if (root) root.scrollTop = 0;
+      window.scrollTo(0, 0);
+    })()
+  `).catch(() => undefined);
+
+  await sleep(120);
 }
 
 async function collectCurrentPage(window, seriesId) {
   return window.webContents.executeJavaScript(`
     (() => {
       const seriesId = ${JSON.stringify(seriesId)};
-      const pathPattern = new RegExp('^/webtoon/' + seriesId + '/\\d+/?$');
 
       function clean(value) {
         return String(value || '').replace(/\\s+/g, ' ').trim();
@@ -110,146 +114,58 @@ async function collectCurrentPage(window, seriesId) {
       const bodyText = clean(document.body?.innerText || '');
       const totalMatch = bodyText.match(/총\\s*(\\d+)\\s*회차/);
       const totalEpisodes = totalMatch ? Number(totalMatch[1]) : null;
+      const rows = [...document.querySelectorAll('a.ep-row-v2-link[href]')];
+      const episodes = [];
+      const seenUrls = new Set();
+      let invalidHrefCount = 0;
+      let invalidTitleCount = 0;
 
-      function rowFor(anchor) {
-        const candidates = [
-          anchor.closest('li'),
-          anchor.closest('article'),
-          anchor.closest('tr'),
-          anchor.closest('[class*="episode"]'),
-          anchor.closest('[class*="list-item"]'),
-          anchor.closest('[class*="webtoon-item"]'),
-          anchor.closest('[class*="item"]'),
-          anchor.closest('[class*="row"]'),
-          anchor.closest('[class*="card"]'),
-          anchor.parentElement,
-        ].filter(Boolean);
-
-        return candidates.sort((a, b) => {
-          const aText = clean(a.innerText || a.textContent || '');
-          const bText = clean(b.innerText || b.textContent || '');
-          return aText.length - bText.length;
-        })[0] || anchor;
-      }
-
-      function extractTitleCandidates(row, anchor) {
-        const values = new Set();
-        const elements = [
-          anchor,
-          ...row.querySelectorAll(
-            'a, span, strong, b, p, h1, h2, h3, h4, h5, div'
-          ),
-        ];
-
-        for (const element of elements) {
-          const value = clean(element.innerText || element.textContent || '');
-          if (!value || value.length > 180 || !value.includes('화')) continue;
-          if (/최신화\\s*보기/.test(value)) continue;
-          values.add(value);
-        }
-
-        const rowText = clean(row.innerText || row.textContent || '');
-        if (rowText && rowText.length <= 260 && rowText.includes('화')) {
-          values.add(rowText);
-        }
-
-        return [...values].sort((a, b) => a.length - b.length);
-      }
-
-      function extractNumber(candidates) {
-        const valid = [];
-
-        for (const candidate of candidates) {
-          const matches = [...candidate.matchAll(/(?:^|\\D)(\\d{1,4}(?:\\.\\d+)?)\\s*화/g)];
-
-          for (const match of matches) {
-            const number = Number(match[1]);
-            if (!Number.isFinite(number) || number <= 0) continue;
-            if (totalEpisodes && number > totalEpisodes) continue;
-            valid.push({
-              number,
-              text: candidate,
-              score: candidate.length,
-            });
-          }
-        }
-
-        if (!valid.length) return null;
-
-        valid.sort((a, b) => {
-          if (a.score !== b.score) return a.score - b.score;
-          return b.number - a.number;
-        });
-
-        return valid[0];
-      }
-
-      function cleanTitle(value, number) {
-        let title = clean(value)
-          .replace(/^0*\\d+\\s*[-–]\\s*/, '')
-          .replace(/\\d{2}\\.\\d{2}\\.\\d{2}.*$/, '')
-          .trim();
-
-        if (!title || !new RegExp('(?:^|\\D)' + number + '(?:\\.\\d+)?\\s*화').test(title)) {
-          title = number + '화';
-        }
-
-        return title;
-      }
-
-      const byUrl = new Map();
-      let matchingUrlCount = 0;
-      let parsedTitleCount = 0;
-
-      for (const anchor of document.querySelectorAll('a[href]')) {
+      for (const row of rows) {
         let href = '';
 
         try {
-          href = new URL(anchor.getAttribute('href'), location.href).href;
+          href = new URL(row.getAttribute('href'), location.href).href;
         } catch {
+          invalidHrefCount += 1;
           continue;
         }
 
         const parsed = new URL(href);
-        if (!pathPattern.test(parsed.pathname)) continue;
 
-        const combined = clean(
-          (anchor.innerText || anchor.textContent || '') + ' ' +
-          (anchor.parentElement?.innerText || anchor.parentElement?.textContent || '')
-        );
+        // 숫자형 주소와 kp-형 주소를 모두 허용하되 같은 작품의 실제 회차 행만 사용합니다.
+        if (!parsed.pathname.startsWith('/webtoon/' + seriesId + '/')) {
+          invalidHrefCount += 1;
+          continue;
+        }
 
-        if (/최신화\\s*보기/.test(combined)) continue;
+        if (seenUrls.has(href)) continue;
 
-        matchingUrlCount += 1;
-        if (byUrl.has(href)) continue;
+        const titleElement = row.querySelector('.ep-row-v2-title strong') ||
+          row.querySelector('.ep-row-v2-title') ||
+          row.querySelector('strong');
+        const titleText = clean(titleElement?.innerText || titleElement?.textContent || '');
+        const matches = [...titleText.matchAll(/(\\d{1,4}(?:\\.\\d+)?)\\s*화/g)];
 
-        const row = rowFor(anchor);
-        const candidates = extractTitleCandidates(row, anchor);
-        const extracted = extractNumber(candidates);
+        if (!matches.length) {
+          invalidTitleCount += 1;
+          continue;
+        }
 
-        if (!extracted) continue;
+        // 관리번호나 썸네일 번호가 앞에 붙어도 제목의 마지막 n화를 실제 화수로 사용합니다.
+        const number = Number(matches[matches.length - 1][1]);
 
-        parsedTitleCount += 1;
-        byUrl.set(href, {
-          number: extracted.number,
-          title: cleanTitle(extracted.text, extracted.number),
+        if (!Number.isFinite(number) || number <= 0) {
+          invalidTitleCount += 1;
+          continue;
+        }
+
+        seenUrls.add(href);
+        episodes.push({
+          number,
+          title: titleText || number + '화',
           url: href,
         });
       }
-
-      const byNumber = new Map();
-
-      for (const episode of byUrl.values()) {
-        const current = byNumber.get(episode.number);
-
-        if (!current || episode.title.length > current.title.length) {
-          byNumber.set(episode.number, episode);
-        }
-      }
-
-      const episodes = [...byNumber.values()]
-        .sort((a, b) => a.number - b.number)
-        .slice(0, 100);
 
       const title = clean(
         document.querySelector('h1')?.innerText ||
@@ -260,14 +176,28 @@ async function collectCurrentPage(window, seriesId) {
       ).replace(/\\s*\\|.*$/, '').trim();
 
       return {
-        episodes,
+        episodes: episodes.slice(0, 100),
         title,
         totalEpisodes,
-        matchingUrlCount,
-        parsedTitleCount,
+        rowCount: rows.length,
+        matchingUrlCount: seenUrls.size,
+        parsedTitleCount: episodes.length,
+        invalidHrefCount,
+        invalidTitleCount,
       };
     })()
   `);
+}
+
+async function safeReload(window) {
+  try {
+    const result = window.webContents.reloadIgnoringCache();
+    if (result && typeof result.then === 'function') {
+      await result;
+    }
+  } catch {
+    // 새로고침 자체가 실패해도 다음 로딩 시도를 계속합니다.
+  }
 }
 
 async function scanCurrentPage(event, payload = {}) {
@@ -285,7 +215,7 @@ async function scanCurrentPage(event, payload = {}) {
 
   event.sender.send('crawler:progress', {
     type: 'status',
-    message: '현재 페이지의 회차 행을 정확히 분석하고 있습니다.',
+    message: '사이트의 실제 회차 행(ep-row-v2)을 분석하고 있습니다.',
   });
 
   let snapshot = null;
@@ -294,6 +224,11 @@ async function scanCurrentPage(event, payload = {}) {
     await loadAndWait(window, sourceUrl);
     snapshot = await collectCurrentPage(window, seriesId);
 
+    event.sender.send('crawler:progress', {
+      type: 'warning',
+      message: `회차 행 ${snapshot.rowCount}개 · URL 확인 ${snapshot.matchingUrlCount}개 · 제목 분석 ${snapshot.parsedTitleCount}개`,
+    });
+
     if (snapshot.episodes.length > 0) break;
 
     if (attempt === 1) {
@@ -301,7 +236,7 @@ async function scanCurrentPage(event, payload = {}) {
         type: 'warning',
         message: '첫 분석 결과가 0개여서 페이지를 새로고침한 뒤 다시 확인합니다.',
       });
-      await window.webContents.reloadIgnoringCache().catch(() => undefined);
+      await safeReload(window);
       await sleep(700);
     }
   }
@@ -313,8 +248,9 @@ async function scanCurrentPage(event, payload = {}) {
 
   if (!filtered.length) {
     throw new Error(
-      `회차 분석 실패: 일치 URL ${snapshot?.matchingUrlCount || 0}개, ` +
-      `제목 분석 성공 ${snapshot?.parsedTitleCount || 0}개`
+      `회차 분석 실패: 실제 행 ${snapshot?.rowCount || 0}개, ` +
+      `URL 확인 ${snapshot?.matchingUrlCount || 0}개, ` +
+      `제목 분석 ${snapshot?.parsedTitleCount || 0}개`
     );
   }
 
@@ -324,7 +260,7 @@ async function scanCurrentPage(event, payload = {}) {
     episodes: filtered,
     count: filtered.length,
     totalEpisodes: snapshot.totalEpisodes,
-    mode: 'current-page-exact-rows',
+    mode: 'ep-row-v2-exact',
   };
 }
 
