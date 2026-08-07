@@ -16,7 +16,8 @@ ipcMain.handle = function captureCoreHandlers(channel, listener) {
 require('./reload-promise-fix.js');
 require('./download-recovery.js');
 require('./novel-ui-runtime.js');
-require('./novel-network-diagnostics.js');
+// 기존 novel-network-diagnostics.js는 webRequest.onCompleted/onErrorOccurred를
+// 다시 등록하면서 새 요청 형식 진단을 덮어쓰므로 더 이상 로드하지 않습니다.
 require('./main-v1.1.js');
 
 ipcMain.handle = nativeHandle;
