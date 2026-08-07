@@ -1,3 +1,6 @@
+const sharedWorker = require('./shared-worker-window.js');
+sharedWorker.installSharedWorkerBrowser();
+
 const { ipcMain } = require('electron');
 
 // 구형 패치가 ipcMain.handle을 바꾸기 전에 Electron 원본을 보관합니다.
@@ -16,6 +19,7 @@ ipcMain.handle = function captureCoreHandlers(channel, listener) {
 require('./reload-promise-fix.js');
 require('./download-recovery.js');
 require('./novel-ui-runtime.js');
+require('./generic-export-label.js');
 require('./main-v1.1.js');
 
 ipcMain.handle = nativeHandle;
