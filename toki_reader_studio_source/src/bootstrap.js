@@ -16,8 +16,6 @@ ipcMain.handle = function captureCoreHandlers(channel, listener) {
 require('./reload-promise-fix.js');
 require('./download-recovery.js');
 require('./novel-ui-runtime.js');
-// 기존 novel-network-diagnostics.js는 webRequest.onCompleted/onErrorOccurred를
-// 다시 등록하면서 새 요청 형식 진단을 덮어쓰므로 더 이상 로드하지 않습니다.
 require('./main-v1.1.js');
 
 ipcMain.handle = nativeHandle;
@@ -25,7 +23,7 @@ ipcMain.removeHandler('crawler:scan');
 
 require('./pdf-export-enhancement.js');
 const novelSupport = require('./novel-text-support.js');
-const novelPassiveDownloader = require('./novel-render-wait-loader.js');
+const novelPassiveDownloader = require('./novel-native-text-loader.js');
 const novelRequestDiagnostics = require('./novel-request-format-diagnostics.js');
 const novelClientDiagnostics = require('./novel-client-chunk-diagnostics.js');
 const stringImageDownloader = require('./string-image-downloader.js');
@@ -74,8 +72,6 @@ function prepareNovelPayload(payload = {}) {
   }
 }
 
-// 숫자형 webtoon/manhwa는 검증된 기존 엔진을 유지하고,
-// 문자열 작품은 전체 스크롤 누적 엔진, novel은 지연 렌더링 텍스트 엔진 + 진단 묶음으로 분리합니다.
 ipcMain.removeHandler('crawler:start');
 nativeHandle('crawler:start', async (event, payload = {}) => {
   const source = String(payload.sourceUrl || payload.episodes?.[0]?.url || '');
@@ -110,7 +106,6 @@ nativeHandle('crawler:cancel', async (event) => {
   return { ok: true };
 });
 
-// 현재 숫자형 스캐너가 등록하는 실제 listener를 저장합니다.
 ipcMain.handle = function captureCurrentScanner(channel, listener) {
   if (channel === 'crawler:scan') numericCrawlerScan = listener;
   return nativeHandle(channel, listener);
@@ -119,7 +114,6 @@ ipcMain.handle = function captureCurrentScanner(channel, listener) {
 require('./current-page-exact-scan.js');
 ipcMain.handle = nativeHandle;
 
-// 최종 라우터: 숫자형은 검증된 기존 스캐너, 문자열 키만 새 호환 스캐너를 사용합니다.
 ipcMain.removeHandler('crawler:scan');
 nativeHandle('crawler:scan', async (event, payload = {}) => {
   try {
