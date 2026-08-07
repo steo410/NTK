@@ -2,6 +2,7 @@ const { BrowserWindow, ipcMain } = require('electron');
 
 let scanWindow = null;
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const CONTENT_PATH_PATTERN = /^\/(webtoon|manhwa|novel)\/(\d+)/;
 
 function normalizeUrl(value) {
   try {
@@ -18,6 +19,17 @@ function parseBound(value, fallback) {
   if (!text) return fallback;
   const number = Number(text);
   return Number.isFinite(number) ? number : fallback;
+}
+
+function parseContentIdentity(sourceUrl) {
+  try {
+    const parsed = new URL(sourceUrl);
+    const match = parsed.pathname.match(CONTENT_PATH_PATTERN);
+    if (!match) return null;
+    return { type: match[1], id: match[2] };
+  } catch {
+    return null;
+  }
 }
 
 async function ensureWindow(show) {
@@ -66,24 +78,14 @@ async function loadAndWait(window, sourceUrl) {
       }))()
     `).catch(() => ({ ready: 'loading', episodeRows: 0, anchors: 0, textLength: 0 }));
 
-    if (
-      state.ready !== 'loading' &&
-      Number(state.episodeRows) > 0
-    ) {
-      break;
-    }
-
+    if (state.ready !== 'loading' && Number(state.episodeRows) > 0) break;
     await sleep(250);
   }
 
-  // 목록이 지연 렌더링되더라도 DOM에 회차 행이 모두 들어오도록 아래까지 한 번 이동합니다.
   await window.webContents.executeJavaScript(`
     (() => {
       const root = document.scrollingElement || document.documentElement;
-      const maxScroll = Math.max(
-        (root?.scrollHeight || 0) - (root?.clientHeight || 0),
-        0
-      );
+      const maxScroll = Math.max((root?.scrollHeight || 0) - (root?.clientHeight || 0), 0);
       if (root) root.scrollTop = maxScroll;
       window.scrollTo(0, maxScroll);
     })()
@@ -102,9 +104,10 @@ async function loadAndWait(window, sourceUrl) {
   await sleep(120);
 }
 
-async function collectCurrentPage(window, seriesId) {
+async function collectCurrentPage(window, contentType, seriesId) {
   return window.webContents.executeJavaScript(`
     (() => {
+      const contentType = ${JSON.stringify(contentType)};
       const seriesId = ${JSON.stringify(seriesId)};
 
       function clean(value) {
@@ -131,9 +134,10 @@ async function collectCurrentPage(window, seriesId) {
         }
 
         const parsed = new URL(href);
+        const expectedPrefix = '/' + contentType + '/' + seriesId + '/';
 
-        // 숫자형 주소와 kp-형 주소를 모두 허용하되 같은 작품의 실제 회차 행만 사용합니다.
-        if (!parsed.pathname.startsWith('/webtoon/' + seriesId + '/')) {
+        // webtoon / manhwa / novel 각각 입력한 작품의 실제 회차 행만 허용합니다.
+        if (!parsed.pathname.startsWith(expectedPrefix)) {
           invalidHrefCount += 1;
           continue;
         }
@@ -144,14 +148,13 @@ async function collectCurrentPage(window, seriesId) {
           row.querySelector('.ep-row-v2-title') ||
           row.querySelector('strong');
         const titleText = clean(titleElement?.innerText || titleElement?.textContent || '');
-        const matches = [...titleText.matchAll(/(\\d{1,4}(?:\\.\\d+)?)\\s*화/g)];
+        const matches = [...titleText.matchAll(/(\\d{1,5}(?:\\.\\d+)?)\\s*화/g)];
 
         if (!matches.length) {
           invalidTitleCount += 1;
           continue;
         }
 
-        // 관리번호나 썸네일 번호가 앞에 붙어도 제목의 마지막 n화를 실제 화수로 사용합니다.
         const number = Number(matches[matches.length - 1][1]);
 
         if (!Number.isFinite(number) || number <= 0) {
@@ -170,6 +173,8 @@ async function collectCurrentPage(window, seriesId) {
       const title = clean(
         document.querySelector('h1')?.innerText ||
         document.querySelector('.webtoon-title')?.innerText ||
+        document.querySelector('.manhwa-title')?.innerText ||
+        document.querySelector('.novel-title')?.innerText ||
         document.querySelector('.toon-title')?.innerText ||
         document.querySelector("meta[property='og:title']")?.content ||
         document.title || ''
@@ -192,9 +197,7 @@ async function collectCurrentPage(window, seriesId) {
 async function safeReload(window) {
   try {
     const result = window.webContents.reloadIgnoringCache();
-    if (result && typeof result.then === 'function') {
-      await result;
-    }
+    if (result && typeof result.then === 'function') await result;
   } catch {
     // 새로고침 자체가 실패해도 다음 로딩 시도를 계속합니다.
   }
@@ -204,25 +207,25 @@ async function scanCurrentPage(event, payload = {}) {
   const sourceUrl = normalizeUrl(payload.sourceUrl);
   if (!sourceUrl) throw new Error('작품 목록 URL을 입력하세요.');
 
-  const parsedUrl = new URL(sourceUrl);
-  const seriesMatch = parsedUrl.pathname.match(/^\/webtoon\/(\d+)/);
-  if (!seriesMatch) throw new Error('지원되는 작품 URL 형식이 아닙니다.');
+  const identity = parseContentIdentity(sourceUrl);
+  if (!identity) {
+    throw new Error('지원되는 URL 형식은 /webtoon/숫자, /manhwa/숫자, /novel/숫자 입니다.');
+  }
 
-  const seriesId = seriesMatch[1];
   const minEpisode = parseBound(payload.minEpisode, Number.NEGATIVE_INFINITY);
   const maxEpisode = parseBound(payload.maxEpisode, Number.POSITIVE_INFINITY);
   const window = await ensureWindow(payload.showBrowser !== false);
 
   event.sender.send('crawler:progress', {
     type: 'status',
-    message: '사이트의 실제 회차 행(ep-row-v2)을 분석하고 있습니다.',
+    message: `${identity.type} 작품의 실제 회차 행(ep-row-v2)을 분석하고 있습니다.`,
   });
 
   let snapshot = null;
 
   for (let attempt = 1; attempt <= 2; attempt += 1) {
     await loadAndWait(window, sourceUrl);
-    snapshot = await collectCurrentPage(window, seriesId);
+    snapshot = await collectCurrentPage(window, identity.type, identity.id);
 
     event.sender.send('crawler:progress', {
       type: 'warning',
@@ -257,14 +260,14 @@ async function scanCurrentPage(event, payload = {}) {
   return {
     title: snapshot.title,
     sourceUrl,
+    contentType: identity.type,
+    seriesId: identity.id,
     episodes: filtered,
     count: filtered.length,
     totalEpisodes: snapshot.totalEpisodes,
-    mode: 'ep-row-v2-exact',
+    mode: 'ep-row-v2-exact-multi-path',
   };
 }
 
 ipcMain.removeHandler('crawler:scan');
-ipcMain.handle('crawler:scan', async (event, payload) => {
-  return scanCurrentPage(event, payload);
-});
+ipcMain.handle('crawler:scan', async (event, payload) => scanCurrentPage(event, payload));
