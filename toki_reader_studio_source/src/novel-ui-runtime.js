@@ -171,15 +171,18 @@ function installUiPatch(window) {
           }
         }
 
-        const empty = document.getElementById('library-filter-empty');
+        let empty = document.getElementById('library-filter-empty');
         const visibleCount = cards.filter((card) => card.style.display !== 'none').length;
-        if (empty) empty.remove();
         if (cards.length && visibleCount === 0) {
-          const message = document.createElement('article');
-          message.id = 'library-filter-empty';
-          message.className = 'card';
-          message.innerHTML = '<h3>검색 결과가 없습니다.</h3><p>카테고리나 제목 검색어를 변경해 보세요.</p>';
-          document.getElementById('library-grid')?.appendChild(message);
+          if (!empty) {
+            empty = document.createElement('article');
+            empty.id = 'library-filter-empty';
+            empty.className = 'card';
+            empty.innerHTML = '<h3>검색 결과가 없습니다.</h3><p>카테고리나 제목 검색어를 변경해 보세요.</p>';
+            document.getElementById('library-grid')?.appendChild(empty);
+          }
+        } else if (empty) {
+          empty.remove();
         }
       }
 
@@ -236,9 +239,7 @@ function installUiPatch(window) {
 
       const exportSelect = document.getElementById('export-series');
       if (exportSelect) {
-        exportSelect.addEventListener('change', () => {
-          updateExportMode();
-        });
+        exportSelect.addEventListener('change', updateExportMode);
       }
 
       const exportButton = document.getElementById('export-button');
@@ -247,7 +248,6 @@ function installUiPatch(window) {
           const selected = selectedExportSeries();
           if (!selected || selected.contentType !== 'novel') return;
 
-          // app.js의 PDF용 클릭 핸들러보다 먼저 novel TXT 내보내기를 처리합니다.
           event.preventDefault();
           event.stopImmediatePropagation();
           const resultBox = document.getElementById('export-result');
