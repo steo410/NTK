@@ -16,6 +16,7 @@ ipcMain.handle = function captureCoreHandlers(channel, listener) {
 require('./reload-promise-fix.js');
 require('./download-recovery.js');
 require('./novel-ui-runtime.js');
+require('./novel-token-hydration.js');
 require('./main-v1.1.js');
 
 // 구형 스캐너 등록 가로채기를 해제합니다.
