@@ -61,7 +61,7 @@ async function ensureWindow(show) {
   return scanWindow;
 }
 
-async function loadAndWait(window, sourceUrl) {
+async function loadAndWait(window, sourceUrl, contentType) {
   try {
     await window.loadURL(sourceUrl);
   } catch {
@@ -72,13 +72,18 @@ async function loadAndWait(window, sourceUrl) {
     const state = await window.webContents.executeJavaScript(`
       (() => ({
         ready: document.readyState,
-        episodeRows: document.querySelectorAll('a.ep-row-v2-link[href]').length,
+        comicRows: document.querySelectorAll('a.ep-row-v2-link[href]').length,
+        novelRows: document.querySelectorAll('a.novel-ep-link[href]').length,
         anchors: document.querySelectorAll('a[href]').length,
         textLength: document.body?.innerText?.length || 0,
       }))()
-    `).catch(() => ({ ready: 'loading', episodeRows: 0, anchors: 0, textLength: 0 }));
+    `).catch(() => ({ ready: 'loading', comicRows: 0, novelRows: 0, anchors: 0, textLength: 0 }));
 
-    if (state.ready !== 'loading' && Number(state.episodeRows) > 0) break;
+    const rowCount = contentType === 'novel'
+      ? Number(state.novelRows)
+      : Number(state.comicRows);
+
+    if (state.ready !== 'loading' && rowCount > 0) break;
     await sleep(250);
   }
 
@@ -115,11 +120,25 @@ async function collectCurrentPage(window, contentType, seriesId) {
       }
 
       const bodyText = clean(document.body?.innerText || '');
-      const totalMatch = bodyText.match(/총\\s*(\\d+)\\s*회차/);
-      const totalEpisodes = totalMatch ? Number(totalMatch[1]) : null;
-      const rows = [...document.querySelectorAll('a.ep-row-v2-link[href]')];
+      const totalPatterns = contentType === 'novel'
+        ? [/에피소드\\s*\\(\\s*(\\d+)\\s*화\\s*\\)/, /총\\s*(\\d+)\\s*회차/, /·\\s*(\\d+)\\s*화/]
+        : [/총\\s*(\\d+)\\s*회차/];
+      let totalEpisodes = null;
+      for (const pattern of totalPatterns) {
+        const match = bodyText.match(pattern);
+        if (match) {
+          totalEpisodes = Number(match[1]);
+          break;
+        }
+      }
+
+      const rowSelector = contentType === 'novel'
+        ? 'a.novel-ep-link[href]'
+        : 'a.ep-row-v2-link[href]';
+      const rows = [...document.querySelectorAll(rowSelector)];
       const episodes = [];
       const seenUrls = new Set();
+      const seenNumbers = new Set();
       let invalidHrefCount = 0;
       let invalidTitleCount = 0;
 
@@ -135,38 +154,49 @@ async function collectCurrentPage(window, contentType, seriesId) {
 
         const parsed = new URL(href);
         const expectedPrefix = '/' + contentType + '/' + seriesId + '/';
-
-        // webtoon / manhwa / novel 각각 입력한 작품의 실제 회차 행만 허용합니다.
         if (!parsed.pathname.startsWith(expectedPrefix)) {
           invalidHrefCount += 1;
           continue;
         }
-
         if (seenUrls.has(href)) continue;
 
-        const titleElement = row.querySelector('.ep-row-v2-title strong') ||
-          row.querySelector('.ep-row-v2-title') ||
-          row.querySelector('strong');
-        const titleText = clean(titleElement?.innerText || titleElement?.textContent || '');
-        const matches = [...titleText.matchAll(/(\\d{1,5}(?:\\.\\d+)?)\\s*화/g)];
+        let number = null;
+        let titleText = '';
 
-        if (!matches.length) {
-          invalidTitleCount += 1;
-          continue;
+        if (contentType === 'novel') {
+          const li = row.closest('li.novel-ep-row');
+          const dataEpisode = Number(li?.dataset?.ep);
+          const numberText = clean(row.querySelector('.ne-num')?.innerText || row.querySelector('.ne-num')?.textContent || '');
+          const numberMatch = numberText.match(/(\\d{1,6}(?:\\.\\d+)?)\\s*화/);
+          number = Number.isFinite(dataEpisode) && dataEpisode > 0
+            ? dataEpisode
+            : numberMatch ? Number(numberMatch[1]) : null;
+          const episodeTitle = clean(row.querySelector('.ne-title')?.innerText || row.querySelector('.ne-title')?.textContent || '');
+          titleText = episodeTitle
+            ? String(number) + '화 ' + episodeTitle
+            : clean(row.innerText || row.textContent || '');
+        } else {
+          const titleElement = row.querySelector('.ep-row-v2-title strong') ||
+            row.querySelector('.ep-row-v2-title') ||
+            row.querySelector('strong');
+          titleText = clean(titleElement?.innerText || titleElement?.textContent || '');
+          const matches = [...titleText.matchAll(/(\\d{1,5}(?:\\.\\d+)?)\\s*화/g)];
+          number = matches.length ? Number(matches[matches.length - 1][1]) : null;
         }
-
-        const number = Number(matches[matches.length - 1][1]);
 
         if (!Number.isFinite(number) || number <= 0) {
           invalidTitleCount += 1;
           continue;
         }
+        if (seenNumbers.has(number)) continue;
 
         seenUrls.add(href);
+        seenNumbers.add(number);
         episodes.push({
           number,
           title: titleText || number + '화',
           url: href,
+          contentType,
         });
       }
 
@@ -175,13 +205,16 @@ async function collectCurrentPage(window, contentType, seriesId) {
         document.querySelector('.webtoon-title')?.innerText ||
         document.querySelector('.manhwa-title')?.innerText ||
         document.querySelector('.novel-title')?.innerText ||
+        document.querySelector('.nd-title')?.innerText ||
         document.querySelector('.toon-title')?.innerText ||
         document.querySelector("meta[property='og:title']")?.content ||
         document.title || ''
       ).replace(/\\s*\\|.*$/, '').trim();
 
+      const sorted = episodes.sort((a, b) => a.number - b.number);
+
       return {
-        episodes: episodes.slice(0, 100),
+        episodes: contentType === 'novel' ? sorted : sorted.slice(0, 100),
         title,
         totalEpisodes,
         rowCount: rows.length,
@@ -218,13 +251,15 @@ async function scanCurrentPage(event, payload = {}) {
 
   event.sender.send('crawler:progress', {
     type: 'status',
-    message: `${identity.type} 작품의 실제 회차 행(ep-row-v2)을 분석하고 있습니다.`,
+    message: identity.type === 'novel'
+      ? '소설 전용 회차 목록(novel-ep-row)을 분석하고 있습니다.'
+      : `${identity.type} 작품의 실제 회차 행(ep-row-v2)을 분석하고 있습니다.`,
   });
 
   let snapshot = null;
 
   for (let attempt = 1; attempt <= 2; attempt += 1) {
-    await loadAndWait(window, sourceUrl);
+    await loadAndWait(window, sourceUrl, identity.type);
     snapshot = await collectCurrentPage(window, identity.type, identity.id);
 
     event.sender.send('crawler:progress', {
@@ -246,8 +281,7 @@ async function scanCurrentPage(event, payload = {}) {
 
   const filtered = (snapshot?.episodes || [])
     .filter((episode) => episode.number >= minEpisode && episode.number <= maxEpisode)
-    .map((episode) => ({ ...episode, selected: true }))
-    .slice(0, 100);
+    .map((episode) => ({ ...episode, selected: true }));
 
   if (!filtered.length) {
     throw new Error(
@@ -262,10 +296,10 @@ async function scanCurrentPage(event, payload = {}) {
     sourceUrl,
     contentType: identity.type,
     seriesId: identity.id,
-    episodes: filtered,
-    count: filtered.length,
+    episodes: identity.type === 'novel' ? filtered : filtered.slice(0, 100),
+    count: identity.type === 'novel' ? filtered.length : Math.min(filtered.length, 100),
     totalEpisodes: snapshot.totalEpisodes,
-    mode: 'ep-row-v2-exact-multi-path',
+    mode: identity.type === 'novel' ? 'novel-ep-row-text' : 'ep-row-v2-exact-multi-path',
   };
 }
 
