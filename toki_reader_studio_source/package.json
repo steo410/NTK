@@ -1,7 +1,7 @@
 {
   "name": "toki-reader-studio",
-  "version": "1.1.28",
-  "description": "Authorized episode collector, downloader, vertical-scroll reader, and PDF exporter.",
+  "version": "1.1.29",
+  "description": "Authorized episode collector, downloader, vertical-scroll reader, and PDF/TXT exporter.",
   "main": "src/bootstrap.js",
   "author": "steoj",
   "license": "MIT",
