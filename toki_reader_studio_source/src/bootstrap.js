@@ -25,6 +25,7 @@ ipcMain.removeHandler('crawler:scan');
 require('./pdf-export-enhancement.js');
 const novelSupport = require('./novel-text-support.js');
 const novelPassiveDownloader = require('./novel-render-wait-loader.js');
+const novelRequestDiagnostics = require('./novel-request-format-diagnostics.js');
 const stringImageDownloader = require('./string-image-downloader.js');
 const diagnostics = require('./scan-diagnostics-v2.js');
 const stringSeriesSupport = require('./string-series-key-support.js');
@@ -72,14 +73,19 @@ function prepareNovelPayload(payload = {}) {
 }
 
 // 숫자형 webtoon/manhwa는 검증된 기존 엔진을 유지하고,
-// 문자열 작품은 전체 스크롤 누적 엔진, novel은 지연 렌더링을 기다리는 텍스트 엔진으로 분리합니다.
+// 문자열 작품은 전체 스크롤 누적 엔진, novel은 지연 렌더링 텍스트 엔진 + 요청 형식 진단으로 분리합니다.
 ipcMain.removeHandler('crawler:start');
 nativeHandle('crawler:start', async (event, payload = {}) => {
   const source = String(payload.sourceUrl || payload.episodes?.[0]?.url || '');
   const identity = parseContentIdentity(source);
 
   if (identity?.type === 'novel') {
-    return novelPassiveDownloader.downloadNovelEpisodes(prepareNovelPayload(payload));
+    await novelRequestDiagnostics.begin(source);
+    try {
+      return await novelPassiveDownloader.downloadNovelEpisodes(prepareNovelPayload(payload));
+    } finally {
+      await novelRequestDiagnostics.end();
+    }
   }
 
   if (identity && !identity.isNumeric && ['webtoon', 'manhwa'].includes(identity.type)) {
