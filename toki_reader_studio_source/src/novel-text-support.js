@@ -2,6 +2,7 @@ const { app, BrowserWindow, ipcMain } = require('electron');
 const fs = require('fs');
 const fsp = fs.promises;
 const path = require('path');
+const { pathToFileURL } = require('url');
 
 let novelWindow = null;
 let cancelRequested = false;
@@ -133,13 +134,8 @@ async function extractNovelText(contents) {
       for (const element of candidates) {
         const text = clean(element.innerText);
         if (!text) continue;
-
-        const linkText = [...element.querySelectorAll('a')]
-          .map((a) => clean(a.innerText))
-          .join(' ');
-        const buttonText = [...element.querySelectorAll('button')]
-          .map((b) => clean(b.innerText))
-          .join(' ');
+        const linkText = [...element.querySelectorAll('a')].map((a) => clean(a.innerText)).join(' ');
+        const buttonText = [...element.querySelectorAll('button')].map((b) => clean(b.innerText)).join(' ');
         const lineCount = text.split(/\\n+/).filter(Boolean).length;
         const childPenalty = Math.min(element.querySelectorAll('*').length, 800) * 0.7;
         const navigationPenalty = (linkText.length + buttonText.length) * 2.2;
@@ -221,7 +217,7 @@ async function downloadNovelEpisodes(payload = {}) {
     const existing = await readJson(manifestPath);
     if (existing?.completed && fs.existsSync(contentPath) && !payload.force) {
       completedEpisodes += 1;
-      sendProgress({ type: 'episode-skipped', episode: number, index: index + 1, total: selected.length, pageCount: 1 });
+      sendProgress({ type: 'episode-skipped', episode: number, index: index + 1, total: selected.length, pageCount: 1, contentType: 'novel' });
       continue;
     }
 
@@ -280,7 +276,7 @@ async function downloadNovelEpisodes(payload = {}) {
     await writeJson(metaPath, meta);
 
     completedEpisodes += 1;
-    sendProgress({ type: 'page-progress', episode: number, page: 1, pageTotal: 1, episodeIndex: index + 1, episodeTotal: selected.length });
+    sendProgress({ type: 'page-progress', episode: number, page: 1, pageTotal: 1, episodeIndex: index + 1, episodeTotal: selected.length, contentType: 'novel' });
     sendProgress({ type: 'episode-complete', episode: number, pageCount: 1, contentType: 'novel', index: index + 1, total: selected.length });
     await sleep(180);
   }
@@ -289,20 +285,36 @@ async function downloadNovelEpisodes(payload = {}) {
   return { completedEpisodes, totalEpisodes: selected.length, cancelled: cancelRequested, seriesSlug };
 }
 
-async function getEpisodeContent(seriesSlug, episodeNumber) {
+async function getReaderItems(seriesSlug, episodeNumber) {
   const libraryRoot = await getLibraryRoot();
   const episodeDir = path.join(libraryRoot, safeFileName(seriesSlug), 'episodes', String(episodeNumber).padStart(4, '0'));
   const contentPath = path.join(episodeDir, 'content.txt');
+
   try {
     const text = await fsp.readFile(contentPath, 'utf-8');
-    return { type: 'text', text };
+    return [{ type: 'text', text, index: 1, name: 'content.txt', url: '' }];
   } catch {
-    return { type: 'images', text: '' };
+    // 이미지 작품은 기존 형식과 동일하게 PNG 목록을 반환합니다.
+  }
+
+  try {
+    const names = (await fsp.readdir(episodeDir))
+      .filter((name) => /^\d{4}\.png$/i.test(name))
+      .sort();
+    return names.map((name, index) => ({
+      type: 'image',
+      index: index + 1,
+      name,
+      url: pathToFileURL(path.join(episodeDir, name)).href,
+    }));
+  } catch {
+    return [];
   }
 }
 
 ipcMain.removeHandler('novel:download');
-ipcMain.handle('novel:download', async (_event, payload) => downloadNovelEpisodes(payload || {}));
+ipMain = ipcMain;
+ipMain.handle('novel:download', async (_event, payload) => downloadNovelEpisodes(payload || {}));
 
 ipcMain.removeHandler('novel:cancel');
 ipcMain.handle('novel:cancel', async () => {
@@ -310,5 +322,8 @@ ipcMain.handle('novel:cancel', async () => {
   return { ok: true };
 });
 
-ipcMain.removeHandler('library:episode-content');
-ipcMain.handle('library:episode-content', async (_event, seriesSlug, episodeNumber) => getEpisodeContent(seriesSlug, episodeNumber));
+// 기존 리더 API를 확장해 이미지 작품과 텍스트 소설을 모두 반환합니다.
+ipcMain.removeHandler('library:episode-images');
+ipcMain.handle('library:episode-images', async (_event, seriesSlug, episodeNumber) => {
+  return getReaderItems(seriesSlug, episodeNumber);
+});
