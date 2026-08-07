@@ -1,6 +1,6 @@
 {
   "name": "toki-reader-studio",
-  "version": "1.1.12",
+  "version": "1.1.13",
   "description": "Authorized episode collector, downloader, vertical-scroll reader, and PDF exporter.",
   "main": "src/bootstrap.js",
   "author": "steoj",
@@ -31,15 +31,11 @@
       "target": [
         {
           "target": "nsis",
-          "arch": [
-            "x64"
-          ]
+          "arch": ["x64"]
         },
         {
           "target": "portable",
-          "arch": [
-            "x64"
-          ]
+          "arch": ["x64"]
         }
       ],
       "artifactName": "${productName}-${version}-${arch}.${ext}"
