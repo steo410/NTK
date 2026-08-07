@@ -124,13 +124,15 @@ async function getNovelLoadState(window) {
 
       const numbers = rows
         .map((row) => Number(row.dataset.ep))
-        .filter((value) => Number.isFinite(value) && value > 0);
+        .filter((value) => Number.isFinite(value) && value > 0)
+        .sort((a, b) => a - b);
 
       return {
         rowCount: rows.length,
         totalEpisodes,
-        minEpisode: numbers.length ? Math.min(...numbers) : null,
-        maxEpisode: numbers.length ? Math.max(...numbers) : null,
+        minEpisode: numbers.length ? numbers[0] : null,
+        maxEpisode: numbers.length ? numbers[numbers.length - 1] : null,
+        signature: numbers.join(','),
         hasLoadMore: Boolean(loadMoreButton),
         loadMoreDisabled: Boolean(loadMoreButton?.disabled),
         loadMoreText: String(loadMoreButton?.innerText || loadMoreButton?.textContent || '').trim(),
@@ -141,84 +143,11 @@ async function getNovelLoadState(window) {
     totalEpisodes: null,
     minEpisode: null,
     maxEpisode: null,
+    signature: '',
     hasLoadMore: false,
     loadMoreDisabled: false,
     loadMoreText: '',
   }));
-}
-
-async function expandAllNovelEpisodes(window, event) {
-  let previousCount = -1;
-  let unchangedRounds = 0;
-
-  for (let round = 0; round < 50; round += 1) {
-    const before = await getNovelLoadState(window);
-
-    event.sender.send('crawler:progress', {
-      type: 'warning',
-      message: before.totalEpisodes
-        ? `소설 회차 확장 중 · ${before.rowCount}/${before.totalEpisodes}개 로드됨`
-        : `소설 회차 확장 중 · ${before.rowCount}개 로드됨`,
-    });
-
-    if (
-      before.totalEpisodes &&
-      before.rowCount >= before.totalEpisodes
-    ) {
-      return before;
-    }
-
-    if (!before.hasLoadMore || before.loadMoreDisabled) {
-      return before;
-    }
-
-    const clicked = await window.webContents.executeJavaScript(`
-      (() => {
-        const button = [...document.querySelectorAll('button')].find((item) =>
-          /이전\\s*회차\\s*더\\s*보기/.test(String(item.innerText || item.textContent || '').trim())
-        );
-        if (!button || button.disabled) return false;
-        button.scrollIntoView({ block: 'center', behavior: 'instant' });
-        button.click();
-        return true;
-      })()
-    `).catch(() => false);
-
-    if (!clicked) return before;
-
-    let grew = false;
-    for (let waitRound = 0; waitRound < 30; waitRound += 1) {
-      await sleep(180);
-      const after = await getNovelLoadState(window);
-      if (after.rowCount > before.rowCount) {
-        grew = true;
-        break;
-      }
-      if (!after.hasLoadMore) break;
-    }
-
-    const after = await getNovelLoadState(window);
-
-    if (after.rowCount === previousCount || !grew) {
-      unchangedRounds += 1;
-    } else {
-      unchangedRounds = 0;
-      previousCount = after.rowCount;
-    }
-
-    if (
-      after.totalEpisodes &&
-      after.rowCount >= after.totalEpisodes
-    ) {
-      return after;
-    }
-
-    if (!after.hasLoadMore || unchangedRounds >= 2) {
-      return after;
-    }
-  }
-
-  return getNovelLoadState(window);
 }
 
 async function collectCurrentPage(window, contentType, seriesId) {
@@ -339,6 +268,109 @@ async function collectCurrentPage(window, contentType, seriesId) {
   `);
 }
 
+async function clickNovelLoadMore(window) {
+  return window.webContents.executeJavaScript(`
+    (() => {
+      const button = [...document.querySelectorAll('button')].find((item) =>
+        /이전\\s*회차\\s*더\\s*보기/.test(String(item.innerText || item.textContent || '').trim())
+      );
+      if (!button || button.disabled) return false;
+      button.scrollIntoView({ block: 'center', behavior: 'instant' });
+      button.click();
+      return true;
+    })()
+  `).catch(() => false);
+}
+
+async function expandAndCollectAllNovelEpisodes(window, event, seriesId) {
+  const episodeMap = new Map();
+  const seenBatchSignatures = new Set();
+  let totalEpisodes = null;
+  let title = '';
+  let lastSnapshot = null;
+
+  for (let round = 0; round < 60; round += 1) {
+    const snapshot = await collectCurrentPage(window, 'novel', seriesId);
+    lastSnapshot = snapshot;
+    if (!title && snapshot.title) title = snapshot.title;
+    if (Number.isFinite(snapshot.totalEpisodes)) totalEpisodes = snapshot.totalEpisodes;
+
+    for (const episode of snapshot.episodes) {
+      if (!episodeMap.has(Number(episode.number))) {
+        episodeMap.set(Number(episode.number), episode);
+      }
+    }
+
+    const state = await getNovelLoadState(window);
+    if (!totalEpisodes && Number.isFinite(state.totalEpisodes)) totalEpisodes = state.totalEpisodes;
+
+    event.sender.send('crawler:progress', {
+      type: 'warning',
+      message: totalEpisodes
+        ? `소설 전체 회차 수집 중 · ${episodeMap.size}/${totalEpisodes}개 누적`
+        : `소설 전체 회차 수집 중 · ${episodeMap.size}개 누적`,
+    });
+
+    if (totalEpisodes && episodeMap.size >= totalEpisodes) break;
+    if (!state.hasLoadMore || state.loadMoreDisabled) break;
+
+    const signature = state.signature || `${state.minEpisode}:${state.maxEpisode}:${state.rowCount}`;
+    if (signature && seenBatchSignatures.has(signature)) {
+      // 같은 묶음이 다시 보이면 한 번 더 기다린 뒤 변화가 없을 때 종료합니다.
+      await sleep(350);
+      const retryState = await getNovelLoadState(window);
+      if (retryState.signature === signature) break;
+    }
+    if (signature) seenBatchSignatures.add(signature);
+
+    const clicked = await clickNovelLoadMore(window);
+    if (!clicked) break;
+
+    let changed = false;
+    for (let waitRound = 0; waitRound < 50; waitRound += 1) {
+      await sleep(160);
+      const nextState = await getNovelLoadState(window);
+      const nextSignature = nextState.signature || `${nextState.minEpisode}:${nextState.maxEpisode}:${nextState.rowCount}`;
+      if (nextSignature && nextSignature !== signature) {
+        changed = true;
+        break;
+      }
+      if (!nextState.hasLoadMore && nextState.rowCount === 0) break;
+    }
+
+    if (!changed) {
+      // SPA 렌더가 늦는 경우 마지막으로 한 번 더 기다립니다.
+      await sleep(500);
+      const nextState = await getNovelLoadState(window);
+      const nextSignature = nextState.signature || `${nextState.minEpisode}:${nextState.maxEpisode}:${nextState.rowCount}`;
+      if (!nextSignature || nextSignature === signature) break;
+    }
+  }
+
+  // 마지막으로 보이는 묶음도 반드시 합칩니다.
+  const finalSnapshot = await collectCurrentPage(window, 'novel', seriesId);
+  if (!title && finalSnapshot.title) title = finalSnapshot.title;
+  if (!totalEpisodes && Number.isFinite(finalSnapshot.totalEpisodes)) totalEpisodes = finalSnapshot.totalEpisodes;
+  for (const episode of finalSnapshot.episodes) {
+    if (!episodeMap.has(Number(episode.number))) {
+      episodeMap.set(Number(episode.number), episode);
+    }
+  }
+
+  const episodes = [...episodeMap.values()].sort((a, b) => Number(a.number) - Number(b.number));
+
+  return {
+    episodes,
+    title: title || finalSnapshot.title || lastSnapshot?.title || '',
+    totalEpisodes,
+    rowCount: episodes.length,
+    matchingUrlCount: episodes.length,
+    parsedTitleCount: episodes.length,
+    invalidHrefCount: 0,
+    invalidTitleCount: 0,
+  };
+}
+
 async function safeReload(window) {
   try {
     const result = window.webContents.reloadIgnoringCache();
@@ -364,7 +396,7 @@ async function scanCurrentPage(event, payload = {}) {
   event.sender.send('crawler:progress', {
     type: 'status',
     message: identity.type === 'novel'
-      ? '소설 전용 회차 목록(novel-ep-row)을 분석하고 있습니다.'
+      ? '소설의 모든 회차 묶음을 한 번에 불러오고 있습니다.'
       : `${identity.type} 작품의 실제 회차 행(ep-row-v2)을 분석하고 있습니다.`,
   });
 
@@ -373,21 +405,15 @@ async function scanCurrentPage(event, payload = {}) {
   for (let attempt = 1; attempt <= 2; attempt += 1) {
     await loadAndWait(window, sourceUrl, identity.type);
 
-    if (identity.type === 'novel') {
-      const expanded = await expandAllNovelEpisodes(window, event);
-      event.sender.send('crawler:progress', {
-        type: 'warning',
-        message: expanded.totalEpisodes
-          ? `소설 회차 확장 완료 · ${expanded.rowCount}/${expanded.totalEpisodes}개 로드됨`
-          : `소설 회차 확장 완료 · ${expanded.rowCount}개 로드됨`,
-      });
-    }
-
-    snapshot = await collectCurrentPage(window, identity.type, identity.id);
+    snapshot = identity.type === 'novel'
+      ? await expandAndCollectAllNovelEpisodes(window, event, identity.id)
+      : await collectCurrentPage(window, identity.type, identity.id);
 
     event.sender.send('crawler:progress', {
       type: 'warning',
-      message: `회차 행 ${snapshot.rowCount}개 · URL 확인 ${snapshot.matchingUrlCount}개 · 제목 분석 ${snapshot.parsedTitleCount}개`,
+      message: identity.type === 'novel'
+        ? `소설 전체 회차 누적 완료 · ${snapshot.parsedTitleCount}${snapshot.totalEpisodes ? '/' + snapshot.totalEpisodes : ''}개`
+        : `회차 행 ${snapshot.rowCount}개 · URL 확인 ${snapshot.matchingUrlCount}개 · 제목 분석 ${snapshot.parsedTitleCount}개`,
     });
 
     if (snapshot.episodes.length > 0) break;
@@ -422,7 +448,7 @@ async function scanCurrentPage(event, payload = {}) {
     episodes: identity.type === 'novel' ? filtered : filtered.slice(0, 100),
     count: identity.type === 'novel' ? filtered.length : Math.min(filtered.length, 100),
     totalEpisodes: snapshot.totalEpisodes,
-    mode: identity.type === 'novel' ? 'novel-ep-row-text-all-loaded' : 'ep-row-v2-exact-multi-path',
+    mode: identity.type === 'novel' ? 'novel-all-batches-single-click' : 'ep-row-v2-exact-multi-path',
   };
 }
 
