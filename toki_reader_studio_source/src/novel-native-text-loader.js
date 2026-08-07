@@ -20,6 +20,44 @@ source = source.replace(
 );
 
 const nativeHelper = String.raw`
+function isNovelUiTailLine(value) {
+  const line = String(value || '').trim();
+  if (!line) return false;
+  if (/^(?:🔊|⚙️?|💬|🔈|🔉|🔇)+$/u.test(line.replace(/\s+/g, ''))) return true;
+
+  const withoutIcons = line.replace(/[🔊⚙️💬🔈🔉🔇]/gu, '').trim();
+  if (!withoutIcons) return true;
+  if (/^댓글\s*\d+\s*개(?:\s+(?:등록순|최신순))*$/u.test(withoutIcons)) return true;
+  if (/^(?:등록순|최신순)(?:\s+(?:등록순|최신순))*$/u.test(withoutIcons)) return true;
+  if (/^(?:댓글\s*\d+\s*개\s*)?(?:등록순\s*)?(?:최신순\s*)?$/u.test(withoutIcons) && /(?:댓글|등록순|최신순)/u.test(withoutIcons)) return true;
+  return false;
+}
+
+function stripTrailingNovelUi(value) {
+  const lines = String(value || '')
+    .replace(/\r\n?/g, '\n')
+    .replace(/\u00a0/g, ' ')
+    .split('\n');
+
+  while (lines.length && !lines[lines.length - 1].trim()) lines.pop();
+
+  let changed = true;
+  while (changed && lines.length) {
+    changed = false;
+    const tailStart = Math.max(0, lines.length - 14);
+    for (let index = tailStart; index < lines.length; index += 1) {
+      if (isNovelUiTailLine(lines[index])) {
+        lines.splice(index);
+        while (lines.length && !lines[lines.length - 1].trim()) lines.pop();
+        changed = true;
+        break;
+      }
+    }
+  }
+
+  return lines.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+}
+
 function isolateNativeNovelText(rawValue) {
   const raw = String(rawValue || '')
     .replace(/\r\n?/g, '\n')
@@ -55,7 +93,8 @@ function isolateNativeNovelText(rawValue) {
     const line = lines[index];
     if (/^댓글(?:\s+\d+\s*개)?$/.test(line)
       || /^댓글을 작성하려면/.test(line)
-      || /^아직 댓글이 없어요/.test(line)) {
+      || /^아직 댓글이 없어요/.test(line)
+      || isNovelUiTailLine(line)) {
       end = index;
       break;
     }
@@ -64,7 +103,8 @@ function isolateNativeNovelText(rawValue) {
   const uiLines = new Set([
     '‹ 이전화', '이전화', '목록', '책갈피', '다음화 ›', '다음화',
     '최상단', '한 화면 위로', '한 화면 아래로', '댓글', '최하단',
-    '음성 읽기', '설정', '글자', '−', '-', '+', '기본'
+    '음성 읽기', '설정', '글자', '−', '-', '+', '기본',
+    '🔊', '⚙', '⚙️', '💬', '등록순', '최신순'
   ]);
 
   const bodyLines = lines.slice(start, end).filter((line) => {
@@ -76,7 +116,7 @@ function isolateNativeNovelText(rawValue) {
     return true;
   });
 
-  return bodyLines.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+  return stripTrailingNovelUi(bodyLines.join('\n'));
 }
 
 function snapshotClipboard() {
@@ -141,6 +181,14 @@ if (source.includes(replayMarker) && !source.includes("method: 'native-page-copy
   source = source.replace(
     replayMarker,
     `  const nativeCopy = await extractNativePageText(window.webContents, episodeUrl);\n  const nativeScore = candidateScore(nativeCopy.text, nativeCopy.selector, episodeUrl);\n  if (nativeCopy.text.length >= 100 && nativeScore >= 1800) {\n    return {\n      text: nativeCopy.text,\n      method: 'native-page-copy',\n      selector: nativeCopy.selector,\n      sourceUrl: episodeUrl,\n      responseCount: 0,\n      resourceCount: 0,\n      loadError,\n    };\n  }\n\n${replayMarker}`
+  );
+}
+
+const writeMarker = "    await fsp.writeFile(contentPath, extraction.text, 'utf-8');";
+if (source.includes(writeMarker) && !source.includes('const cleanedNovelText = stripTrailingNovelUi(extraction.text);')) {
+  source = source.replace(
+    writeMarker,
+    "    const cleanedNovelText = stripTrailingNovelUi(extraction.text);\n    if (cleanedNovelText.length >= 100) extraction.text = cleanedNovelText;\n    await fsp.writeFile(contentPath, extraction.text, 'utf-8');"
   );
 }
 
