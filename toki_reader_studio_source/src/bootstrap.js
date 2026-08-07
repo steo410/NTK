@@ -15,6 +15,7 @@ ipcMain.handle = function captureCoreHandlers(channel, listener) {
 
 require('./reload-promise-fix.js');
 require('./download-recovery.js');
+require('./string-viewer-recovery.js');
 require('./novel-ui-runtime.js');
 require('./novel-network-diagnostics.js');
 require('./main-v1.1.js');
