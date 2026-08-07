@@ -22,6 +22,7 @@ ipcMain.handle = nativeHandle;
 ipcMain.removeHandler('crawler:scan');
 
 require('./pdf-export-enhancement.js');
+require('./library-catalog-enhancement.js');
 const novelSupport = require('./novel-text-support.js');
 const novelPassiveDownloader = require('./novel-native-text-loader.js');
 const novelRequestDiagnostics = require('./novel-request-format-diagnostics.js');
