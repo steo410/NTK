@@ -24,7 +24,8 @@ ipcMain.removeHandler('crawler:scan');
 
 require('./pdf-export-enhancement.js');
 const novelSupport = require('./novel-text-support.js');
-const novelPassiveDownloader = require('./novel-passive-body-downloader.js');
+// v1.1.22 소설 모듈의 잘못 이스케이프된 정규식을 안전하게 교정해서 로드합니다.
+const novelPassiveDownloader = require('./novel-passive-safe-loader.js');
 const stringImageDownloader = require('./string-image-downloader.js');
 const diagnostics = require('./scan-diagnostics-v2.js');
 const stringSeriesSupport = require('./string-series-key-support.js');
