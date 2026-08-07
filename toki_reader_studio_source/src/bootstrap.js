@@ -15,7 +15,6 @@ ipcMain.handle = function captureCoreHandlers(channel, listener) {
 
 require('./reload-promise-fix.js');
 require('./download-recovery.js');
-require('./string-viewer-recovery.js');
 require('./novel-ui-runtime.js');
 require('./novel-network-diagnostics.js');
 require('./main-v1.1.js');
@@ -25,7 +24,8 @@ ipcMain.removeHandler('crawler:scan');
 
 require('./pdf-export-enhancement.js');
 const novelSupport = require('./novel-text-support.js');
-const novelNetworkDownloader = require('./novel-network-body-downloader.js');
+const novelPassiveDownloader = require('./novel-passive-body-downloader.js');
+const stringImageDownloader = require('./string-image-downloader.js');
 const diagnostics = require('./scan-diagnostics-v2.js');
 const stringSeriesSupport = require('./string-series-key-support.js');
 
@@ -71,14 +71,19 @@ function prepareNovelPayload(payload = {}) {
   }
 }
 
-// 웹툰/만화는 기존 이미지 엔진, 소설은 네트워크 응답까지 읽는 텍스트 엔진으로 자동 분기합니다.
+// 숫자형 webtoon/manhwa는 검증된 기존 엔진을 유지하고,
+// 문자열 작품은 전체 스크롤 누적 엔진, novel은 디버거 없는 텍스트 엔진으로 분리합니다.
 ipcMain.removeHandler('crawler:start');
 nativeHandle('crawler:start', async (event, payload = {}) => {
   const source = String(payload.sourceUrl || payload.episodes?.[0]?.url || '');
   const identity = parseContentIdentity(source);
 
   if (identity?.type === 'novel') {
-    return novelNetworkDownloader.downloadNovelEpisodes(prepareNovelPayload(payload));
+    return novelPassiveDownloader.downloadNovelEpisodes(prepareNovelPayload(payload));
+  }
+
+  if (identity && !identity.isNumeric && ['webtoon', 'manhwa'].includes(identity.type)) {
+    return stringImageDownloader.downloadStringImages(payload);
   }
 
   if (!originalCrawlerStart) throw new Error('기존 다운로드 엔진을 찾지 못했습니다.');
@@ -88,7 +93,8 @@ nativeHandle('crawler:start', async (event, payload = {}) => {
 ipcMain.removeHandler('crawler:cancel');
 nativeHandle('crawler:cancel', async (event) => {
   novelSupport.requestCancel();
-  novelNetworkDownloader.requestCancel();
+  novelPassiveDownloader.requestCancel();
+  stringImageDownloader.requestCancel();
   if (originalCrawlerCancel) return originalCrawlerCancel(event);
   return { ok: true };
 });
