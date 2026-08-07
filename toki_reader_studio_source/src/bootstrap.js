@@ -25,6 +25,7 @@ ipcMain.removeHandler('crawler:scan');
 
 require('./pdf-export-enhancement.js');
 const novelSupport = require('./novel-text-support.js');
+const novelNetworkDownloader = require('./novel-network-body-downloader.js');
 const diagnostics = require('./scan-diagnostics-v2.js');
 const stringSeriesSupport = require('./string-series-key-support.js');
 
@@ -70,14 +71,14 @@ function prepareNovelPayload(payload = {}) {
   }
 }
 
-// 웹툰/만화는 기존 이미지 엔진, 소설은 텍스트 엔진으로 자동 분기합니다.
+// 웹툰/만화는 기존 이미지 엔진, 소설은 네트워크 응답까지 읽는 텍스트 엔진으로 자동 분기합니다.
 ipcMain.removeHandler('crawler:start');
 nativeHandle('crawler:start', async (event, payload = {}) => {
   const source = String(payload.sourceUrl || payload.episodes?.[0]?.url || '');
   const identity = parseContentIdentity(source);
 
   if (identity?.type === 'novel') {
-    return novelSupport.downloadNovelEpisodes(prepareNovelPayload(payload));
+    return novelNetworkDownloader.downloadNovelEpisodes(prepareNovelPayload(payload));
   }
 
   if (!originalCrawlerStart) throw new Error('기존 다운로드 엔진을 찾지 못했습니다.');
@@ -87,6 +88,7 @@ nativeHandle('crawler:start', async (event, payload = {}) => {
 ipcMain.removeHandler('crawler:cancel');
 nativeHandle('crawler:cancel', async (event) => {
   novelSupport.requestCancel();
+  novelNetworkDownloader.requestCancel();
   if (originalCrawlerCancel) return originalCrawlerCancel(event);
   return { ok: true };
 });
