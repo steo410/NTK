@@ -5,16 +5,11 @@ const Module = require('module');
 const filename = path.join(__dirname, 'novel-passive-body-downloader.js');
 let source = fs.readFileSync(filename, 'utf-8');
 
-// v1.1.22 계열에서 남아 있을 수 있는 잘못된 정규식 이스케이프를 먼저 교정합니다.
 source = source.split('/\\\\/api\\\\/|novel|episode|content/i').join('/\\/api\\/|novel|episode|content/i');
-
-// 네이티브 선택/복사 fallback에서 Electron clipboard를 사용합니다.
 source = source.replace(
   "const { app, BrowserWindow } = require('electron');",
   "const { app, BrowserWindow, clipboard } = require('electron');"
 );
-
-// 동적 NovelContent가 늦게 나타나는 경우를 위해 최대 60초까지 DOM을 확인합니다.
 source = source.replace(
   'for (let round = 0; round < 28; round += 1) {',
   'for (let round = 0; round < 240; round += 1) {'
@@ -35,15 +30,12 @@ function isolateNativeNovelText(rawValue) {
   const lines = raw.split('\n').map((line) => line.trim());
   if (!lines.length) return '';
 
-  // novel-viewer의 도구 막대는 본문 바로 앞에 "기본" 버튼을 갖습니다.
-  // 화면 전체 선택 시 이 위치 이후부터 댓글 영역 직전까지가 실제 소설 본문입니다.
   let start = -1;
   for (let index = 0; index < lines.length; index += 1) {
     if (lines[index] === '기본') start = index + 1;
   }
 
   if (start < 0) {
-    // 사이트 표현이 바뀐 경우 "글자 - 16px + 기본" 주변을 보조 기준으로 찾습니다.
     for (let index = 0; index < lines.length; index += 1) {
       if (/^글자$/.test(lines[index])) {
         const nearby = lines.slice(index, index + 8);
@@ -84,17 +76,30 @@ function isolateNativeNovelText(rawValue) {
     return true;
   });
 
-  return bodyLines
-    .join('\n')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
+  return bodyLines.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+}
+
+function snapshotClipboard() {
+  const saved = [];
+  try {
+    for (const format of clipboard.availableFormats()) {
+      try { saved.push({ format, data: clipboard.readBuffer(format) }); } catch {}
+    }
+  } catch {}
+  return saved;
+}
+
+function restoreClipboard(saved) {
+  try { clipboard.clear(); } catch {}
+  if (!Array.isArray(saved) || saved.length === 0) return;
+  for (const item of saved) {
+    try { clipboard.writeBuffer(item.format, item.data); } catch {}
+  }
 }
 
 async function extractNativePageText(contents, episodeUrl) {
-  let previousClipboard = '';
+  const savedClipboard = snapshotClipboard();
   let copied = '';
-
-  try { previousClipboard = clipboard.readText(); } catch {}
 
   try {
     if (typeof contents.focus === 'function') contents.focus();
@@ -103,9 +108,9 @@ async function extractNativePageText(contents, episodeUrl) {
     }
 
     contents.selectAll();
-    await sleep(120);
-    contents.copy();
     await sleep(160);
+    contents.copy();
+    await sleep(220);
     copied = clipboard.readText();
   } catch {
     copied = '';
@@ -113,10 +118,7 @@ async function extractNativePageText(contents, episodeUrl) {
     try {
       if (typeof contents.unselect === 'function') contents.unselect();
     } catch {}
-    try {
-      // 사용자의 기존 클립보드 텍스트를 즉시 복원합니다.
-      clipboard.writeText(previousClipboard);
-    } catch {}
+    restoreClipboard(savedClipboard);
   }
 
   const text = isolateNativeNovelText(copied);
@@ -138,7 +140,7 @@ const replayMarker = '  const replay = await inspectAndReplayResources(window.we
 if (source.includes(replayMarker) && !source.includes("method: 'native-page-copy'")) {
   source = source.replace(
     replayMarker,
-    `  // NovelContent는 JSON + WASM으로 복원된 글을 닫힌/보호된 렌더링 영역에 표시할 수 있어\n  // document.outerHTML이나 일반 DOM 탐색에는 본문이 보이지 않을 수 있습니다.\n  // 이 경우 Chromium의 실제 화면 선택/복사 명령으로 사용자가 읽는 텍스트를 그대로 가져옵니다.\n  const nativeCopy = await extractNativePageText(window.webContents, episodeUrl);\n  const nativeScore = candidateScore(nativeCopy.text, nativeCopy.selector, episodeUrl);\n  if (nativeCopy.text.length >= 100 && nativeScore >= 1800) {\n    return {\n      text: nativeCopy.text,\n      method: 'native-page-copy',\n      selector: nativeCopy.selector,\n      sourceUrl: episodeUrl,\n      responseCount: 0,\n      resourceCount: 0,\n      loadError,\n    };\n  }\n\n${replayMarker}`
+    `  const nativeCopy = await extractNativePageText(window.webContents, episodeUrl);\n  const nativeScore = candidateScore(nativeCopy.text, nativeCopy.selector, episodeUrl);\n  if (nativeCopy.text.length >= 100 && nativeScore >= 1800) {\n    return {\n      text: nativeCopy.text,\n      method: 'native-page-copy',\n      selector: nativeCopy.selector,\n      sourceUrl: episodeUrl,\n      responseCount: 0,\n      resourceCount: 0,\n      loadError,\n    };\n  }\n\n${replayMarker}`
   );
 }
 
