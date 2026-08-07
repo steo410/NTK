@@ -16,7 +16,9 @@ ipcMain.handle = function captureCoreHandlers(channel, listener) {
 require('./reload-promise-fix.js');
 require('./download-recovery.js');
 require('./novel-ui-runtime.js');
-require('./novel-token-hydration.js');
+// 소설 본문 토큰 보정을 위해 강제 재로딩하던 패치는 제거합니다.
+// 대신 실제 XHR/fetch 요청을 기록해 본문 로딩 실패 원인을 추적합니다.
+require('./novel-network-diagnostics.js');
 require('./main-v1.1.js');
 
 // 구형 스캐너 등록 가로채기를 해제합니다.
