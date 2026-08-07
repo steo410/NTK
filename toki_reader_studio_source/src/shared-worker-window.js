@@ -37,7 +37,6 @@ function installCaptureUiSuppression(window) {
 
     await window.webContents.executeJavaScript(`
       (() => {
-        document.getElementById('ntk-capture-hide-fixed-ui')?.remove();
         const hidden = [];
         const stage = document.getElementById('ntk-string-capture-stage');
         for (const element of document.querySelectorAll('body *')) {
@@ -90,10 +89,10 @@ function installSharedWorkerBrowser() {
   installed = true;
 
   const SharedBrowserWindow = new Proxy(OriginalBrowserWindow, {
-    construct(Target, args, NewTarget) {
+    construct(Target, args) {
       const options = args?.[0] || {};
       if (!isWorkerTitle(options.title)) {
-        return Reflect.construct(Target, args, NewTarget);
+        return Reflect.construct(Target, args, Target);
       }
 
       if (!isUsable(workerWindow)) workerWindow = adoptExistingWorker();
@@ -105,11 +104,8 @@ function installSharedWorkerBrowser() {
         return registerWorker(workerWindow);
       }
 
-      const merged = {
-        ...options,
-        title: 'NTK 작업 브라우저',
-      };
-      return registerWorker(Reflect.construct(Target, [merged], NewTarget));
+      const merged = { ...options, title: 'NTK 작업 브라우저' };
+      return registerWorker(Reflect.construct(Target, [merged], Target));
     },
   });
 
