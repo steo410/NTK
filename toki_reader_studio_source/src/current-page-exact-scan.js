@@ -109,6 +109,118 @@ async function loadAndWait(window, sourceUrl, contentType) {
   await sleep(120);
 }
 
+async function getNovelLoadState(window) {
+  return window.webContents.executeJavaScript(`
+    (() => {
+      const rows = [...document.querySelectorAll('li.novel-ep-row')];
+      const bodyText = String(document.body?.innerText || '').replace(/\\s+/g, ' ');
+      const totalMatch = bodyText.match(/에피소드\\s*\\(\\s*(\\d+)\\s*화\\s*\\)/) ||
+        bodyText.match(/·\\s*(\\d+)\\s*화/);
+      const totalEpisodes = totalMatch ? Number(totalMatch[1]) : null;
+      const buttons = [...document.querySelectorAll('button')];
+      const loadMoreButton = buttons.find((button) =>
+        /이전\\s*회차\\s*더\\s*보기/.test(String(button.innerText || button.textContent || '').trim())
+      );
+
+      const numbers = rows
+        .map((row) => Number(row.dataset.ep))
+        .filter((value) => Number.isFinite(value) && value > 0);
+
+      return {
+        rowCount: rows.length,
+        totalEpisodes,
+        minEpisode: numbers.length ? Math.min(...numbers) : null,
+        maxEpisode: numbers.length ? Math.max(...numbers) : null,
+        hasLoadMore: Boolean(loadMoreButton),
+        loadMoreDisabled: Boolean(loadMoreButton?.disabled),
+        loadMoreText: String(loadMoreButton?.innerText || loadMoreButton?.textContent || '').trim(),
+      };
+    })()
+  `).catch(() => ({
+    rowCount: 0,
+    totalEpisodes: null,
+    minEpisode: null,
+    maxEpisode: null,
+    hasLoadMore: false,
+    loadMoreDisabled: false,
+    loadMoreText: '',
+  }));
+}
+
+async function expandAllNovelEpisodes(window, event) {
+  let previousCount = -1;
+  let unchangedRounds = 0;
+
+  for (let round = 0; round < 50; round += 1) {
+    const before = await getNovelLoadState(window);
+
+    event.sender.send('crawler:progress', {
+      type: 'warning',
+      message: before.totalEpisodes
+        ? `소설 회차 확장 중 · ${before.rowCount}/${before.totalEpisodes}개 로드됨`
+        : `소설 회차 확장 중 · ${before.rowCount}개 로드됨`,
+    });
+
+    if (
+      before.totalEpisodes &&
+      before.rowCount >= before.totalEpisodes
+    ) {
+      return before;
+    }
+
+    if (!before.hasLoadMore || before.loadMoreDisabled) {
+      return before;
+    }
+
+    const clicked = await window.webContents.executeJavaScript(`
+      (() => {
+        const button = [...document.querySelectorAll('button')].find((item) =>
+          /이전\\s*회차\\s*더\\s*보기/.test(String(item.innerText || item.textContent || '').trim())
+        );
+        if (!button || button.disabled) return false;
+        button.scrollIntoView({ block: 'center', behavior: 'instant' });
+        button.click();
+        return true;
+      })()
+    `).catch(() => false);
+
+    if (!clicked) return before;
+
+    let grew = false;
+    for (let waitRound = 0; waitRound < 30; waitRound += 1) {
+      await sleep(180);
+      const after = await getNovelLoadState(window);
+      if (after.rowCount > before.rowCount) {
+        grew = true;
+        break;
+      }
+      if (!after.hasLoadMore) break;
+    }
+
+    const after = await getNovelLoadState(window);
+
+    if (after.rowCount === previousCount || !grew) {
+      unchangedRounds += 1;
+    } else {
+      unchangedRounds = 0;
+      previousCount = after.rowCount;
+    }
+
+    if (
+      after.totalEpisodes &&
+      after.rowCount >= after.totalEpisodes
+    ) {
+      return after;
+    }
+
+    if (!after.hasLoadMore || unchangedRounds >= 2) {
+      return after;
+    }
+  }
+
+  return getNovelLoadState(window);
+}
+
 async function collectCurrentPage(window, contentType, seriesId) {
   return window.webContents.executeJavaScript(`
     (() => {
@@ -260,6 +372,17 @@ async function scanCurrentPage(event, payload = {}) {
 
   for (let attempt = 1; attempt <= 2; attempt += 1) {
     await loadAndWait(window, sourceUrl, identity.type);
+
+    if (identity.type === 'novel') {
+      const expanded = await expandAllNovelEpisodes(window, event);
+      event.sender.send('crawler:progress', {
+        type: 'warning',
+        message: expanded.totalEpisodes
+          ? `소설 회차 확장 완료 · ${expanded.rowCount}/${expanded.totalEpisodes}개 로드됨`
+          : `소설 회차 확장 완료 · ${expanded.rowCount}개 로드됨`,
+      });
+    }
+
     snapshot = await collectCurrentPage(window, identity.type, identity.id);
 
     event.sender.send('crawler:progress', {
@@ -299,7 +422,7 @@ async function scanCurrentPage(event, payload = {}) {
     episodes: identity.type === 'novel' ? filtered : filtered.slice(0, 100),
     count: identity.type === 'novel' ? filtered.length : Math.min(filtered.length, 100),
     totalEpisodes: snapshot.totalEpisodes,
-    mode: identity.type === 'novel' ? 'novel-ep-row-text' : 'ep-row-v2-exact-multi-path',
+    mode: identity.type === 'novel' ? 'novel-ep-row-text-all-loaded' : 'ep-row-v2-exact-multi-path',
   };
 }
 
