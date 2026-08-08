@@ -35,37 +35,169 @@ function installCaptureUiSuppression(window) {
       return originalSendCommand(method, params);
     }
 
+    const clip = params?.clip || null;
+
+    // 캡처 시 사이트 UI를 종류별로 숨기는 대신 페이지 전체를 격리합니다.
+    // 문자열 작품은 이미 존재하는 NTK 캡처 stage만 남기고,
+    // 숫자형 작품은 clip과 가장 정확히 겹치는 원본 img를 복제한 stage만 남깁니다.
     await window.webContents.executeJavaScript(`
-      (() => {
-        const hidden = [];
-        const stage = document.getElementById('ntk-string-capture-stage');
-        for (const element of document.querySelectorAll('body *')) {
-          if (stage && (element === stage || stage.contains(element))) continue;
-          const style = getComputedStyle(element);
-          if (style.position !== 'fixed' && style.position !== 'sticky') continue;
-          element.dataset.ntkCaptureVisibility = element.style.visibility || '';
-          element.style.setProperty('visibility', 'hidden', 'important');
-          hidden.push(element);
+      (async () => {
+        const clip = ${JSON.stringify(clip)};
+        const existingStage = document.getElementById('ntk-string-capture-stage');
+        let isolationStage = existingStage;
+        let createdIsolationStage = false;
+
+        if (!isolationStage && clip && Number(clip.width) > 0 && Number(clip.height) > 0) {
+          const clipRect = {
+            left: Number(clip.x || 0),
+            top: Number(clip.y || 0),
+            right: Number(clip.x || 0) + Number(clip.width || 0),
+            bottom: Number(clip.y || 0) + Number(clip.height || 0),
+            width: Number(clip.width || 0),
+            height: Number(clip.height || 0),
+          };
+
+          let best = null;
+          let bestScore = -1;
+
+          for (const image of document.querySelectorAll('img')) {
+            const rect = image.getBoundingClientRect();
+            const docRect = {
+              left: rect.left + window.scrollX,
+              top: rect.top + window.scrollY,
+              right: rect.right + window.scrollX,
+              bottom: rect.bottom + window.scrollY,
+              width: rect.width,
+              height: rect.height,
+            };
+            if (docRect.width < 1 || docRect.height < 1) continue;
+
+            const overlapWidth = Math.max(0, Math.min(docRect.right, clipRect.right) - Math.max(docRect.left, clipRect.left));
+            const overlapHeight = Math.max(0, Math.min(docRect.bottom, clipRect.bottom) - Math.max(docRect.top, clipRect.top));
+            const overlap = overlapWidth * overlapHeight;
+            if (overlap <= 0) continue;
+
+            const clipArea = Math.max(clipRect.width * clipRect.height, 1);
+            const imageArea = Math.max(docRect.width * docRect.height, 1);
+            const overlapRatio = overlap / Math.min(clipArea, imageArea);
+            const widthDiff = Math.abs(docRect.width - clipRect.width) / Math.max(clipRect.width, 1);
+            const heightDiff = Math.abs(docRect.height - clipRect.height) / Math.max(clipRect.height, 1);
+            const score = overlapRatio * 100 - widthDiff * 20 - heightDiff * 20;
+
+            if (score > bestScore) {
+              bestScore = score;
+              best = image;
+            }
+          }
+
+          if (best) {
+            isolationStage = document.createElement('div');
+            isolationStage.id = 'ntk-capture-isolation-stage';
+            Object.assign(isolationStage.style, {
+              position: 'absolute',
+              left: Number(clip.x || 0) + 'px',
+              top: Number(clip.y || 0) + 'px',
+              width: Number(clip.width || 1) + 'px',
+              height: Number(clip.height || 1) + 'px',
+              margin: '0',
+              padding: '0',
+              overflow: 'hidden',
+              lineHeight: '0',
+              background: '#fff',
+              zIndex: '2147483647',
+              visibility: 'visible',
+              opacity: '1',
+              pointerEvents: 'none',
+            });
+
+            const clone = document.createElement('img');
+            clone.src = best.currentSrc || best.src || best.getAttribute('data-src') || '';
+            clone.loading = 'eager';
+            clone.decoding = 'sync';
+            Object.assign(clone.style, {
+              display: 'block',
+              width: '100%',
+              height: '100%',
+              margin: '0',
+              padding: '0',
+              border: '0',
+              maxWidth: 'none',
+              maxHeight: 'none',
+              objectFit: 'fill',
+              visibility: 'visible',
+              opacity: '1',
+            });
+            isolationStage.appendChild(clone);
+            document.documentElement.appendChild(isolationStage);
+            createdIsolationStage = true;
+
+            if (!clone.complete || clone.naturalWidth === 0) {
+              await new Promise((resolve) => {
+                const timer = setTimeout(resolve, 12000);
+                clone.addEventListener('load', () => { clearTimeout(timer); resolve(); }, { once: true });
+                clone.addEventListener('error', () => { clearTimeout(timer); resolve(); }, { once: true });
+              });
+            }
+          }
         }
-        window.__ntkCaptureHiddenElements = hidden;
-        return hidden.length;
+
+        const body = document.body;
+        const previousBodyVisibility = body?.style.getPropertyValue('visibility') || '';
+        const previousBodyPriority = body?.style.getPropertyPriority('visibility') || '';
+        const previousBodyOpacity = body?.style.getPropertyValue('opacity') || '';
+        const previousBodyOpacityPriority = body?.style.getPropertyPriority('opacity') || '';
+
+        // 임시 stage는 documentElement의 직접 자식이므로 body 전체를 숨여도 캡처 대상은 유지됩니다.
+        if (body) {
+          body.style.setProperty('visibility', 'hidden', 'important');
+          body.style.setProperty('opacity', '0', 'important');
+        }
+
+        if (isolationStage) {
+          isolationStage.style.setProperty('visibility', 'visible', 'important');
+          isolationStage.style.setProperty('opacity', '1', 'important');
+        }
+
+        window.__ntkCaptureIsolation = {
+          createdIsolationStage,
+          previousBodyVisibility,
+          previousBodyPriority,
+          previousBodyOpacity,
+          previousBodyOpacityPriority,
+        };
+
+        await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+        return Boolean(isolationStage);
       })()
-    `).catch(() => 0);
+    `).catch(() => false);
 
     try {
       return await originalSendCommand(method, params);
     } finally {
       await window.webContents.executeJavaScript(`
         (() => {
-          const hidden = window.__ntkCaptureHiddenElements || [];
-          for (const element of hidden) {
-            if (!element?.isConnected) continue;
-            const previous = element.dataset.ntkCaptureVisibility || '';
-            if (previous) element.style.visibility = previous;
-            else element.style.removeProperty('visibility');
-            delete element.dataset.ntkCaptureVisibility;
+          const state = window.__ntkCaptureIsolation || {};
+          const body = document.body;
+
+          if (body) {
+            if (state.previousBodyVisibility) {
+              body.style.setProperty('visibility', state.previousBodyVisibility, state.previousBodyPriority || '');
+            } else {
+              body.style.removeProperty('visibility');
+            }
+
+            if (state.previousBodyOpacity) {
+              body.style.setProperty('opacity', state.previousBodyOpacity, state.previousBodyOpacityPriority || '');
+            } else {
+              body.style.removeProperty('opacity');
+            }
           }
-          window.__ntkCaptureHiddenElements = [];
+
+          if (state.createdIsolationStage) {
+            document.getElementById('ntk-capture-isolation-stage')?.remove();
+          }
+
+          window.__ntkCaptureIsolation = null;
         })()
       `).catch(() => undefined);
     }
